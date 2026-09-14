@@ -11,6 +11,13 @@
 # so the deployed app starts with a clean slate. Every boot after the
 # first just skips straight to launching Streamlit, since the files
 # already exist in the volume by then.
+#
+# NOTE: the DB build is only considered "done" once it finishes
+# successfully — tracked via Database/.build_ok — instead of just
+# checking whether dinedata.db exists. sqlite3.connect() creates the
+# .db file immediately, before any rows are inserted, so a crash
+# mid-build used to leave a permanently stuck, half-built database
+# that no future code fix or redeploy could repair.
 
 mkdir -p storage/Database storage/Data_Cleaning
 ln -sfn storage/Database Database
@@ -21,9 +28,10 @@ if [ ! -f Data_Cleaning/kofe_tala_sales_data.csv ]; then
     cp Data_Cleaning_empty/*.csv Data_Cleaning/
 fi
 
-if [ ! -f Database/dinedata.db ]; then
-    echo "First boot detected — building an EMPTY database schema"
-    python build_database.py
+if [ ! -f Database/.build_ok ]; then
+    echo "No successful build recorded — (re)building database schema"
+    rm -f Database/dinedata.db
+    python build_database.py && touch Database/.build_ok
 fi
 
 streamlit run dashboard_kofetala.py --server.port "$PORT" --server.address 0.0.0.0
