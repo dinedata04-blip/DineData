@@ -28,6 +28,19 @@ WASTE_CSV     = os.path.join(DATA_CLEANING_DIR, 'kofe_tala_waste_data.csv')
 os.makedirs(DATABASE_DIR, exist_ok=True)
 
 
+def safe_read_csv(path):
+    """Read a CSV, treating a missing OR a truly empty (0-byte, no header)
+    file the same way: as "no data yet" instead of crashing. This matters
+    on first boot, where a zero-byte placeholder CSV would otherwise raise
+    pandas.errors.EmptyDataError and kill the whole build."""
+    if not path or not os.path.exists(path):
+        return None
+    try:
+        return pd.read_csv(path)
+    except pd.errors.EmptyDataError:
+        return None
+
+
 def build_schema(conn):
     """Create the Galaxy Schema tables (drops existing tables first)."""
     cur = conn.cursor()
@@ -316,15 +329,14 @@ def main():
     print("Building DineData Galaxy Schema database")
     print("=" * 60)
 
-    sales_df     = pd.read_csv(SALES_CSV)     if os.path.exists(SALES_CSV)     else None
-    menu_df      = pd.read_csv(MENU_CSV)      if os.path.exists(MENU_CSV)      else None
-    inventory_df = pd.read_csv(INVENTORY_CSV) if os.path.exists(INVENTORY_CSV) else None
-    waste_df     = pd.read_csv(WASTE_CSV)     if os.path.exists(WASTE_CSV)     else None
+    sales_df     = safe_read_csv(SALES_CSV)
+    menu_df      = safe_read_csv(MENU_CSV)
+    inventory_df = safe_read_csv(INVENTORY_CSV)
+    waste_df     = safe_read_csv(WASTE_CSV)
 
-    if sales_df is None and waste_df is None:
-        print("ERROR: No CSV data found in Data_Cleaning/. Run the preprocessing "
-              "pipeline first (data_preprocessing_kofetala.py -> feature_engineering.py).")
-        return
+    if sales_df is None and menu_df is None and inventory_df is None and waste_df is None:
+        print("No CSV data found (or all CSVs are empty) — building an EMPTY "
+              "schema with 0 records. This is expected on first boot.")
 
     conn = sqlite3.connect(DB_PATH)
     build_schema(conn)
