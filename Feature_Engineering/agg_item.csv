@@ -1,0 +1,109 @@
+item,category,total_qty,total_revenue,avg_margin,avg_waste_rate,menu_performance
+ latte ,Coffee Based,140,13310.0,0.7,0.05,Improve
+6 Chicken wings ,Mini Bites,1,275.0,0.7,0.15,Reconsider
+Add_on (cheese),Sans Coffee,2,30.0,0.2,0.07,Reconsider
+Add_on (egg),Sans Coffee,2,30.0,0.3333,0.07,Reconsider
+Add_on (ham),Sans Coffee,1,20.0,0.25,0.07,Reconsider
+Add_on (kimchi),Sans Coffee,8,165.0,0.27499999999999997,0.07,Improve
+Add_on (seaweeds),Sans Coffee,13,130.0,0.2,0.07,Improve
+BFF (Better French fries) Large (bbq),Mini Bites,456,43230.0,0.7,0.15,Keep
+BFF (Better French fries) Large (cheese ),Mini Bites,529,50000.0,0.7,0.15,Keep
+BFF (Better French fries) Large (cheese),Mini Bites,2,200.0,0.7,0.15,Reconsider
+BFF (Better French fries) Large (sour cream),Mini Bites,533,50405.0,0.7,0.15,Keep
+BFF (Better French fries)medium  ( cheese ),Mini Bites,195,10380.0,0.7,0.15,Improve
+BFF (Better French fries)medium  (bbq ),Mini Bites,140,7590.0,0.7,0.15,Improve
+BFF (Better French fries)medium  (large),Mini Bites,1,89.0,0.7,0.15,Reconsider
+BFF (Better French fries)medium  (medium ),Mini Bites,10,490.0,0.7,0.15,Improve
+BFF (Better French fries)medium  (sour cream),Mini Bites,133,7160.0,0.7,0.15,Improve
+Belgian waffle  (mango caramel ),Sans Coffee,109,9675.0,0.7,0.07,Improve
+Belgian waffle  (peanut butter ),Sans Coffee,43,3600.0,0.7,0.07,Improve
+Belgian waffle  (strawberry chocolate ),Sans Coffee,279,24985.0,0.7,0.07,Keep
+Brownies ,Sans Coffee,168,11802.0,0.7,0.07,Improve
+Chicken fillet,Mini Bites,2,300.0,0.7,0.15,Reconsider
+Chicken pops (bbq),Mini Bites,4,400.0,0.5,0.15,Improve
+Chicken wings (1 dozen),Mini Bites,52,28620.0,0.7,0.15,Improve
+Chicken wings (3pcs),Mini Bites,667,100110.0,0.7,0.15,Keep
+Chicken wings (extra rice ),Mini Bites,93,1395.0,0.7,0.15,Improve
+Chicken wings (half dozen),Mini Bites,147,40371.0,0.7,0.15,Improve
+Chiz melt  (bacon),Mini Bites,95,8875.0,0.7,0.15,Improve
+Chiz melt  (ham),Mini Bites,116,10100.0,0.7,0.15,Improve
+Chiz melt  (spam lite),Mini Bites,264,23340.0,0.7,0.15,Keep
+Chiz melt (bacon),Mini Bites,1,100.0,0.7,0.15,Reconsider
+Choco caramel decadence,Sans Coffee,1,149.0,0.7,0.07,Reconsider
+Coffee Syphon (arabica),Sans Coffee,1,99.0,0.7,0.07,Reconsider
+Cold brew with foamy vanilla ,Sans Coffee,200,20660.0,0.7,0.07,Improve
+Cookies ,Sans Coffee,288,17592.0,0.7,0.07,Keep
+Drip coffee  (barako),Sans Coffee,4,216.0,0.6999999999999998,0.07,Improve
+Extra Rice,Sans Coffee,133,2280.0,0.7,0.07,Improve
+FFFF (large bbq),Sans Coffee,3,60.0,0.10000000000000002,0.07,Reconsider
+FFFF (large cheese ),Sans Coffee,2,40.0,0.1,0.07,Reconsider
+FFFF (large sc),Sans Coffee,1,20.0,0.1,0.07,Reconsider
+FFFF (med sc),Sans Coffee,1,10.0,0.2,0.07,Reconsider
+FFFF (plain with catsup medium),Sans Coffee,3,30.0,0.20000000000000004,0.07,Reconsider
+French fries Spicy barbecue  (large ),Mini Bites,22,2160.0,0.7,0.15,Improve
+French fries Spicy barbecue  (medium ),Mini Bites,40,2340.0,0.7,0.15,Improve
+French fries plain (large),Mini Bites,1,100.0,0.1,0.15,Reconsider
+Iced honey shaken espresso ,Signature Kôfē,40,4830.0,0.7,0.06,Improve
+Overload lomi (malabnaw),Mini Bites,193,19107.0,0.0,0.15,Improve
+Overload lomi (malapot),Mini Bites,878,86922.0,0.0,0.15,Improve
+Product Name (regular ),Sans Coffee,350,40345.0,0.8433688172043011,0.07,Keep
+Product Name (special a),Sans Coffee,146,19800.0,0.7,0.07,Improve
+Product Name (special b),Sans Coffee,114,17430.0,0.7,0.07,Improve
+Ramen (regular),Mini Bites,1,140.0,0.8804,0.15,Reconsider
+Sinagtala lomi 20 pax,Mini Bites,1,1200.0,0.7,0.15,Reconsider
+Spanish latte (hot),Coffee Based,264,25516.0,0.7,0.05,Keep
+Spanish latte (iced),Coffee Based,880,93467.6,0.7,0.05,Keep
+Strawberry Reverie ,Sans Coffee,30,3870.0,0.7,0.07,Improve
+Whipped Americano,Signature Kôfē,14,1666.0,0.7,0.060000000000000005,Improve
+americano (hot),Coffee Based,301,25660.0,0.7,0.05,Keep
+americano (iced),Coffee Based,150,14140.0,0.7,0.05,Improve
+belgian waffle plain ,Sans Coffee,138,9500.0,0.7,0.07,Improve
+blended cappuccino ,Kôfē Frappé,74,8206.0,0.7,0.08,Improve
+brownie,Sans Coffee,32,2218.0,0.7,0.07,Improve
+cappuccino  (hot),Coffee Based,272,25796.2,0.7,0.05,Keep
+cappuccino  (ice),Coffee Based,226,23834.0,0.6999999999999998,0.05000000000000001,Improve
+caramel macchiato  (hot),Coffee Based,606,63604.0,0.7,0.05,Keep
+caramel macchiato  (iced),Coffee Based,1848,213662.0,0.7,0.05,Keep
+caramel macchiato (hot),Coffee Based,1,140.0,0.7,0.05,Reconsider
+caramel macchiato (iced),Coffee Based,3,450.0,0.6999999999999998,0.05000000000000001,Reconsider
+choco coated waffle,Sans Coffee,2,140.0,0.7,0.07,Reconsider
+choco dinosaur latte,Sans Coffee,1276,146435.0,0.7,0.07,Keep
+dalgona ,Signature Kôfē,125,13205.0,0.7,0.06,Improve
+dirty coffee shake ,Kôfē Frappé,217,27213.0,0.7,0.08,Improve
+drip coffee (8 bags/pouch) (arabica),Sans Coffee,2,410.0,0.7,0.07,Reconsider
+drip coffee (8 bags/pouch) (barako),Sans Coffee,91,11110.0,0.7,0.07,Improve
+extra shot,Sans Coffee,44,2356.5,0.7,0.07,Improve
+hot citron tea,Sans Coffee,109,7848.0,0.7,0.07,Improve
+hot cocoa latte ,Sans Coffee,311,32815.2,0.6999999999999998,0.07,Improve
+hot creamy barako,Sans Coffee,10,610.0,0.7,0.07,Improve
+iced creamy barako,Sans Coffee,23,1857.0,0.7,0.07,Improve
+iced premium barako,Sans Coffee,4,276.0,0.7,0.07,Improve
+kofetala special blend ,Sans Coffee,240,27560.0,0.7,0.07,Improve
+latte,Coffee Based,1,140.0,0.7,0.05,Reconsider
+mango banana milk shake ,Kôfē Frappé,347,40771.2,0.7,0.08,Keep
+matcha Supreme latte (hot),Sans Coffee,61,6507.2,0.7,0.07,Improve
+matcha Supreme latte (iced),Sans Coffee,552,64752.0,0.7,0.07,Keep
+matcha espresso fusion  (hot),Signature Kôfē,48,5152.0,0.7,0.05999999999999999,Improve
+matcha espresso fusion  (iced),Signature Kôfē,142,16798.0,0.7,0.06,Improve
+mocha (hot),Coffee Based,190,19770.0,0.7,0.049999999999999996,Improve
+mocha (iced),Coffee Based,264,30448.0,0.7,0.05,Keep
+oreo overload Frappe,Kôfē Frappé,1,160.0,0.7,0.08,Reconsider
+oreo overload Frappe ,Kôfē Frappé,961,119735.0,0.7000000000000001,0.08,Keep
+premium barako,Sans Coffee,9,441.0,0.6999999999999998,0.07,Improve
+simple milk tea ,Sans Coffee,253,23567.0,0.7,0.07,Keep
+sparkling berry,Sans Coffee,162,17008.0,0.7,0.07,Improve
+strawberry latte,Sans Coffee,532,62791.0,0.7,0.07,Keep
+street food sampler (large),Sans Coffee,217,20240.0,0.7,0.07,Improve
+street food sampler (medium),Sans Coffee,82,4438.0,0.7,0.07,Improve
+super mocha ,Kôfē Frappé,241,30459.0,0.7,0.08,Keep
+the Christmas drink (hot ),Signature Kôfē,19,2021.0,0.7,0.06,Improve
+the Christmas drink (iced),Signature Kôfē,38,4352.0,0.7,0.060000000000000005,Improve
+the SM tea,Sans Coffee,39,4851.0,0.7,0.07,Improve
+the super charged (25% more coffee)  (hot),Sans Coffee,12,1258.0,0.7,0.07,Improve
+the super charged (25% more coffee)  (iced),Sans Coffee,28,3202.0,0.7,0.07,Improve
+triple caramel,Kôfē Frappé,1,160.0,0.7,0.08,Reconsider
+triple caramel ,Kôfē Frappé,426,53374.0,0.7,0.08,Keep
+white mocha  (hot),Coffee Based,286,30364.0,0.7,0.05,Keep
+white mocha  (iced),Coffee Based,852,98448.0,0.7,0.05,Keep
+white mocha (hot),Coffee Based,1,140.0,0.7,0.05,Reconsider
+white mocha (iced),Coffee Based,1,150.0,0.7,0.05,Reconsider
