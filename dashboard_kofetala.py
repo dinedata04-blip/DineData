@@ -324,7 +324,7 @@ def chart_insight(html_text, kind='info'):
 # ============================================================================
 
 DATA_CLEANING_DIR = 'Data_Cleaning'
-ML_MODELS_DIR     = 'ML_Models'
+ML_MODELS_DIR     = 'ML_models'
 FEAT_ENG_DIR      = 'Feature_Engineering'
 
 DATA_PATHS = {
