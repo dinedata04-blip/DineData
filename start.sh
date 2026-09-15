@@ -45,7 +45,7 @@ fi
 # page), instead of shipping stale/empty models forever.
 echo "Training ML models (feature engineering + 4 Random Forest models)..."
 (cd Feature_Engineering && python feature_engineering.py) \
-  && (cd ML_Models && python ml_models.py) \
+    && (cd ML_models && python ml_models.py) \
   || echo "⚠️  Model training failed — dashboard will show 'Missing' for models and keep running without predictions."
 
 streamlit run dashboard_kofetala.py --server.port "$PORT" --server.address 0.0.0.0
