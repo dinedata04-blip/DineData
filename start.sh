@@ -34,4 +34,18 @@ if [ ! -f Database/.build_ok ]; then
     python build_database.py && touch Database/.build_ok
 fi
 
+# Train the 4 Random Forest models EVERY boot (not just first boot).
+# ML_Models/ and Feature_Engineering/ hold source code (not just data), so
+# unlike Database/ and Data_Cleaning/ they can't be symlinked into the one
+# Railway volume without hiding the .py files that live there too. Instead
+# we just retrain on every start — the dataset is small (a few thousand
+# rows) so this only takes a few seconds, and it has the nice side effect
+# of always reflecting whatever is currently in Data_Cleaning/ (which DOES
+# persist, and grows whenever someone uploads new data via the Database
+# page), instead of shipping stale/empty models forever.
+echo "Training ML models (feature engineering + 4 Random Forest models)..."
+(cd Feature_Engineering && python feature_engineering.py) \
+  && (cd ML_Models && python ml_models.py) \
+  || echo "⚠️  Model training failed — dashboard will show 'Missing' for models and keep running without predictions."
+
 streamlit run dashboard_kofetala.py --server.port "$PORT" --server.address 0.0.0.0
