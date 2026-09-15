@@ -2826,15 +2826,22 @@ elif page == 'Forecast & Predictions':
             # ── Prepare More / As Usual / Prepare Less ────────────────────
             st.markdown("#### Production Recommendations")
 
-            # Deduplicate and get top unique items per demand
+         # Deduplicate and get top unique items per demand
             waste_input_norm, wi_item_disp, _ = add_normalized_keys(waste_input, item_col='item_name')
-            demand_by_item = (
-                waste_input_norm.groupby('_item_key')['Predicted Demand (units)']
-                .mean().sort_values(ascending=False).reset_index()
-            )
-            demand_by_item['item_name'] = demand_by_item['_item_key'].map(wi_item_disp)
-            demand_by_item = demand_by_item[['item_name', 'Predicted Demand (units)']].drop_duplicates(subset='item_name')
-            demand_by_item.columns = ['Item', 'Demand']
+            demand_col_numeric = pd.to_numeric(waste_input_norm['Predicted Demand (units)'], errors='coerce')
+
+            if demand_col_numeric.notna().any():
+                waste_input_norm['Predicted Demand (units)'] = demand_col_numeric
+                demand_by_item = (
+                    waste_input_norm.groupby('_item_key')['Predicted Demand (units)']
+                    .mean().sort_values(ascending=False).reset_index()
+                )
+                demand_by_item['item_name'] = demand_by_item['_item_key'].map(wi_item_disp)
+                demand_by_item = demand_by_item[['item_name', 'Predicted Demand (units)']].drop_duplicates(subset='item_name')
+                demand_by_item.columns = ['Item', 'Demand']
+            else:
+                st.info("Run the prediction models to see production recommendations here.")
+                demand_by_item = pd.DataFrame(columns=['Item', 'Demand'])
 
             # 5 items per column — focused and actionable for kitchen staff
             N = 5
