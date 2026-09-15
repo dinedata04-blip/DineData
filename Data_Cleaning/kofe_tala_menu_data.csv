@@ -1,0 +1,109 @@
+item_name,category,price,cost,prep_time_minutes,profit_margin
+ latte ,Coffee Based,95,29,5,66
+6 Chicken wings ,Mini Bites,275,82,5,193
+Add_on (cheese),Sans Coffee,15,12,5,3
+Add_on (egg),Sans Coffee,15,10,5,5
+Add_on (ham),Sans Coffee,20,15,5,5
+Add_on (kimchi),Sans Coffee,21,15,5,6
+Add_on (seaweeds),Sans Coffee,10,8,5,2
+BFF (Better French fries) Large (bbq),Mini Bites,95,28,5,67
+BFF (Better French fries) Large (cheese ),Mini Bites,95,28,5,67
+BFF (Better French fries) Large (cheese),Mini Bites,100,30,5,70
+BFF (Better French fries) Large (sour cream),Mini Bites,95,28,5,67
+BFF (Better French fries)medium  ( cheese ),Mini Bites,53,16,5,37
+BFF (Better French fries)medium  (bbq ),Mini Bites,54,16,5,38
+BFF (Better French fries)medium  (large),Mini Bites,89,27,5,62
+BFF (Better French fries)medium  (medium ),Mini Bites,49,15,5,34
+BFF (Better French fries)medium  (sour cream),Mini Bites,54,16,5,38
+Belgian waffle  (mango caramel ),Sans Coffee,89,27,5,62
+Belgian waffle  (peanut butter ),Sans Coffee,84,25,5,59
+Belgian waffle  (strawberry chocolate ),Sans Coffee,90,27,5,63
+Brownies ,Sans Coffee,70,21,5,49
+Chicken fillet,Mini Bites,150,45,5,105
+Chicken pops (bbq),Mini Bites,100,50,5,50
+Chicken wings (1 dozen),Mini Bites,550,165,5,385
+Chicken wings (3pcs),Mini Bites,150,45,5,105
+Chicken wings (extra rice ),Mini Bites,15,4,5,11
+Chicken wings (half dozen),Mini Bites,275,82,5,193
+Chiz melt  (bacon),Mini Bites,93,28,5,65
+Chiz melt  (ham),Mini Bites,87,26,5,61
+Chiz melt  (spam lite),Mini Bites,89,27,5,62
+Chiz melt (bacon),Mini Bites,100,30,5,70
+Choco caramel decadence,Sans Coffee,149,45,5,104
+Coffee Syphon (arabica),Sans Coffee,99,30,5,69
+Cold brew with foamy vanilla ,Sans Coffee,103,31,5,72
+Cookies ,Sans Coffee,61,18,5,43
+Drip coffee  (barako),Sans Coffee,56,17,5,39
+Extra Rice,Sans Coffee,17,5,5,12
+FFFF (large bbq),Sans Coffee,20,18,5,2
+FFFF (large cheese ),Sans Coffee,20,18,5,2
+FFFF (large sc),Sans Coffee,20,18,5,2
+FFFF (med sc),Sans Coffee,10,8,5,2
+FFFF (plain with catsup medium),Sans Coffee,10,8,5,2
+French fries Spicy barbecue  (large ),Mini Bites,98,30,5,68
+French fries Spicy barbecue  (medium ),Mini Bites,58,18,5,40
+French fries plain (large),Mini Bites,100,90,5,10
+Iced honey shaken espresso ,Signature Kôfē,121,36,5,85
+Overload lomi (malabnaw),Mini Bites,99,99,5,0
+Overload lomi (malapot),Mini Bites,99,99,5,0
+Product Name (regular ),Sans Coffee,115,18,5,97
+Product Name (special a),Sans Coffee,136,41,5,95
+Product Name (special b),Sans Coffee,153,46,5,107
+Ramen (regular),Mini Bites,140,17,5,123
+Sinagtala lomi 20 pax,Mini Bites,1200,360,5,840
+Spanish latte (hot),Coffee Based,97,29,5,68
+Spanish latte (iced),Coffee Based,106,32,5,74
+Strawberry Reverie ,Sans Coffee,129,39,5,90
+Whipped Americano,Signature Kôfē,119,36,5,83
+americano (hot),Coffee Based,85,26,5,59
+americano (iced),Coffee Based,95,28,5,67
+belgian waffle plain ,Sans Coffee,69,21,5,48
+blended cappuccino ,Kôfē Frappé,111,33,5,78
+brownie,Sans Coffee,69,21,5,48
+cappuccino  (hot),Coffee Based,95,29,5,66
+cappuccino  (ice),Coffee Based,106,32,5,74
+caramel macchiato  (hot),Coffee Based,105,32,5,73
+caramel macchiato  (iced),Coffee Based,116,35,5,81
+caramel macchiato (hot),Coffee Based,140,42,5,98
+caramel macchiato (iced),Coffee Based,150,45,5,105
+choco coated waffle,Sans Coffee,70,21,5,49
+choco dinosaur latte,Sans Coffee,115,35,5,80
+dalgona ,Signature Kôfē,106,32,5,74
+dirty coffee shake ,Kôfē Frappé,126,38,5,88
+drip coffee (8 bags/pouch) (arabica),Sans Coffee,205,62,5,143
+drip coffee (8 bags/pouch) (barako),Sans Coffee,124,37,5,87
+extra shot,Sans Coffee,53,16,5,37
+hot citron tea,Sans Coffee,73,22,5,51
+hot cocoa latte ,Sans Coffee,106,32,5,74
+hot creamy barako,Sans Coffee,62,19,5,43
+iced creamy barako,Sans Coffee,82,24,5,58
+iced premium barako,Sans Coffee,69,21,5,48
+kofetala special blend ,Sans Coffee,115,34,5,81
+latte,Coffee Based,140,42,5,98
+mango banana milk shake ,Kôfē Frappé,117,35,5,82
+matcha Supreme latte (hot),Sans Coffee,107,32,5,75
+matcha Supreme latte (iced),Sans Coffee,117,35,5,82
+matcha espresso fusion  (hot),Signature Kôfē,107,32,5,75
+matcha espresso fusion  (iced),Signature Kôfē,118,35,5,83
+mocha (hot),Coffee Based,104,31,5,73
+mocha (iced),Coffee Based,115,35,5,80
+oreo overload Frappe,Kôfē Frappé,160,48,5,112
+oreo overload Frappe ,Kôfē Frappé,125,37,5,88
+premium barako,Sans Coffee,49,15,5,34
+simple milk tea ,Sans Coffee,93,28,5,65
+sparkling berry,Sans Coffee,105,31,5,74
+strawberry latte,Sans Coffee,119,36,5,83
+street food sampler (large),Sans Coffee,93,28,5,65
+street food sampler (medium),Sans Coffee,54,16,5,38
+super mocha ,Kôfē Frappé,126,38,5,88
+the Christmas drink (hot ),Signature Kôfē,106,32,5,74
+the Christmas drink (iced),Signature Kôfē,115,34,5,81
+the SM tea,Sans Coffee,124,37,5,87
+the super charged (25% more coffee)  (hot),Sans Coffee,103,31,5,72
+the super charged (25% more coffee)  (iced),Sans Coffee,114,34,5,80
+triple caramel,Kôfē Frappé,160,48,5,112
+triple caramel ,Kôfē Frappé,125,38,5,87
+white mocha  (hot),Coffee Based,106,32,5,74
+white mocha  (iced),Coffee Based,116,35,5,81
+white mocha (hot),Coffee Based,140,42,5,98
+white mocha (iced),Coffee Based,150,45,5,105
