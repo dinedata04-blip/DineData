@@ -318,6 +318,19 @@ def chart_insight(html_text, kind='info'):
     </div>
     ''', unsafe_allow_html=True)
 
+def full_breakdown_html(pairs, prefix='', suffix='', decimals=2, show_pct=True):
+    """Formats an ordered list of (label, value) pairs into a single
+    '<b>A</b>: 10 (40%), <b>B</b>: 8 (32%), <b>C</b>: 7 (28%)' string,
+    so a chart_insight box can state every category's value, not just the
+    single highest one. `pairs` should already be sorted the way it's
+    meant to display (e.g. largest to smallest)."""
+    total = sum(v for _, v in pairs) or 1
+    parts = []
+    for label, val in pairs:
+        pct_txt = f" ({val/total*100:.1f}%)" if show_pct else ""
+        parts.append(f"<b>{label}</b>: {prefix}{val:,.{decimals}f}{suffix}{pct_txt}")
+    return ", ".join(parts)
+
 
 # ============================================================================
 # FILE PATHS — relative to project root where dashboard.py lives
@@ -395,6 +408,79 @@ def normalize_text_columns(df, cols):
         canonical = df.groupby(key)[col].agg(lambda s: s.value_counts().idxmax())
         df[col] = key.map(canonical)
     return df
+
+# ── Quarter → Month mapping, shared by every Year/Quarter/Month filter row ──
+QUARTER_MONTHS = {
+    'Q1': ['January', 'February', 'March'],
+    'Q2': ['April', 'May', 'June'],
+    'Q3': ['July', 'August', 'September'],
+    'Q4': ['October', 'November', 'December'],
+}
+ALL_MONTHS = ['January','February','March','April','May','June',
+              'July','August','September','October','November','December']
+
+def render_year_quarter_month_filter(df, key_prefix, date_col='date'):
+    """Renders one Year / Quarter / Month filter row and returns the
+    filtered dataframe. The Month dropdown is CASCADED off the selected
+    Quarter — picking Q1 narrows the Month options down to just January,
+    February, March, instead of showing all 12 months (which let someone
+    pick a month outside the quarter they just chose, silently overriding
+    it). Used by every chart on the dashboard that filters by Year/Quarter/
+    Month, so the cascading behavior is consistent everywhere."""
+    df_f = df.copy()
+    if date_col not in df_f.columns:
+        return df_f
+    c1, c2, c3 = st.columns(3)
+    yrs = sorted(df_f[date_col].dt.year.dropna().unique().tolist(), reverse=True)
+    with c1:
+        yr = st.selectbox("Year", ['All'] + [str(y) for y in yrs], key=f'{key_prefix}_year')
+    with c2:
+        qtr = st.selectbox("Quarter", ['All','Q1','Q2','Q3','Q4'], key=f'{key_prefix}_qtr')
+    with c3:
+        month_opts = ['All'] + (QUARTER_MONTHS[qtr] if qtr != 'All' else ALL_MONTHS)
+        mon = st.selectbox("Month", month_opts, key=f'{key_prefix}_month')
+    if yr != 'All':
+        df_f = df_f[df_f[date_col].dt.year == int(yr)]
+    if qtr != 'All':
+        qm = {'Q1':[1,2,3],'Q2':[4,5,6],'Q3':[7,8,9],'Q4':[10,11,12]}
+        df_f = df_f[df_f[date_col].dt.month.isin(qm[qtr])]
+    if mon != 'All':
+        df_f = df_f[df_f[date_col].dt.month_name() == mon]
+    return df_f
+
+def render_daily_weekly_yearly_filter(df, key_prefix, date_col='date', show_granularity=True):
+    """Renders a Daily / Weekly / Yearly 'View by' selector (optional) plus
+    a custom date-range picker — the same pattern used on the Database
+    page — and returns (filtered_df, granularity). Replaces the old
+    'Last 30 days / Last 90 days / This year / All time'-style shortcut
+    filters, which only covered a few fixed windows and couldn't be
+    adjusted to an exact range. Passing show_granularity=False renders
+    only the date-range picker (for charts that don't need a granularity
+    choice)."""
+    df_f = df.copy()
+    if date_col not in df_f.columns or len(df_f) == 0:
+        return df_f, 'Daily'
+    min_d = df_f[date_col].min().date()
+    max_d = df_f[date_col].max().date()
+    if show_granularity:
+        g1, g2 = st.columns([1, 2])
+        with g1:
+            granularity = st.selectbox("View by", ['Daily', 'Weekly', 'Yearly'], index=1, key=f'{key_prefix}_gran')
+        with g2:
+            date_range = st.date_input(
+                "Date Range", value=(min_d, max_d), min_value=min_d, max_value=max_d,
+                key=f'{key_prefix}_daterange'
+            )
+    else:
+        granularity = 'Daily'
+        date_range = st.date_input(
+            "Date Range", value=(min_d, max_d), min_value=min_d, max_value=max_d,
+            key=f'{key_prefix}_daterange'
+        )
+    if isinstance(date_range, tuple) and len(date_range) == 2:
+        start_d, end_d = date_range
+        df_f = df_f[(df_f[date_col].dt.date >= start_d) & (df_f[date_col].dt.date <= end_d)]
+    return df_f, granularity
 
 # ============================================================================
 # DATA LOADERS — cached so they only load once per session
@@ -967,7 +1053,7 @@ if page == 'Dashboard Overview':
             if len(trend_df) == 0:
                 st.info("No records for this selection.")
             else:
-                fig = px.area(trend_df, x=x_lbl, y='Waste Cost',
+                fig = px.line(trend_df, x=x_lbl, y='Waste Cost', markers=True,
                               color_discrete_sequence=[EARTH['accent']])
                 fig.update_layout(
                     plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
@@ -991,9 +1077,15 @@ if page == 'Dashboard Overview':
                             _lbl = pd.to_datetime(str(latest_p[x_lbl])).strftime('%B %Y')
                     except Exception:
                         _lbl = str(latest_p[x_lbl])
+                    highest_p = trend_df.loc[trend_df['Waste Cost'].idxmax()]
+                    lowest_p  = trend_df.loc[trend_df['Waste Cost'].idxmin()]
                     chart_insight(
                         f"Waste cost is <b>{_direction}</b> over time. The most recent {ow_granularity.lower()} "
-                        f"({_lbl}) recorded <b>₱{latest_p['Waste Cost']:,.2f}</b> in waste.",
+                        f"({_lbl}) recorded <b>₱{latest_p['Waste Cost']:,.2f}</b> in waste. "
+                        f"Across all {len(trend_df)} periods shown, the highest was "
+                        f"<b>₱{highest_p['Waste Cost']:,.2f}</b> ({highest_p[x_lbl]}), the lowest was "
+                        f"<b>₱{lowest_p['Waste Cost']:,.2f}</b> ({lowest_p[x_lbl]}), and the average was "
+                        f"<b>₱{trend_df['Waste Cost'].mean():,.2f}</b> per {ow_granularity.lower()[:-2] if ow_granularity.endswith('ly') else ow_granularity.lower()}.",
                         'warn' if _direction == 'increasing' else 'good'
                     )
 
@@ -1024,12 +1116,14 @@ if page == 'Dashboard Overview':
                 st.plotly_chart(fig, use_container_width=True)
 
                 if len(cat_w) > 0:
-                    top_cat_row = cat_w.sort_values('total_waste_cost', ascending=False).iloc[0]
-                    cat_pct = top_cat_row['total_waste_cost'] / cat_w['total_waste_cost'].sum() * 100
+                    cat_w_sorted = cat_w.sort_values('total_waste_cost', ascending=False)
+                    breakdown = full_breakdown_html(
+                        list(zip(cat_w_sorted['category'], cat_w_sorted['total_waste_cost'])), prefix='₱'
+                    )
                     chart_insight(
-                        f"<b>{top_cat_row['category']}</b> accounts for the largest share of waste at "
-                        f"<b>{cat_pct:.1f}%</b> (₱{top_cat_row['total_waste_cost']:,.2f}). "
-                        f"This category is the best starting point for waste-reduction efforts."
+                        f"Waste cost by category — {breakdown}. "
+                        f"<b>{cat_w_sorted.iloc[0]['category']}</b> has the largest share and is the best "
+                        f"starting point for waste-reduction efforts."
                     )
 
         st.markdown("")
@@ -1074,10 +1168,13 @@ if page == 'Dashboard Overview':
                         margin=dict(l=0, r=80, t=10, b=0)
                     )
                     st.plotly_chart(fig, use_container_width=True)
+                    top3 = top_w.sort_values('Waste Cost', ascending=False).head(3)
+                    top3_html = full_breakdown_html(
+                        list(zip(top3['Item'], top3['Waste Cost'])), prefix='₱', show_pct=False
+                    )
                     chart_insight(
-                        f"<b>{top_w.iloc[0]['Item']}</b> is the most-wasted item at "
-                        f"<b>\u20b1{top_w.iloc[0]['Waste Cost']:,.2f}</b>. Together, these 10 items make up "
-                        f"<b>\u20b1{top_w['Waste Cost'].sum():,.2f}</b> in total waste cost."
+                        f"Top 3 by waste cost — {top3_html}. Together, all {len(top_w)} items shown make up "
+                        f"<b>₱{top_w['Waste Cost'].sum():,.2f}</b> in total waste cost."
                     )
 
         st.markdown("")
@@ -1149,10 +1246,14 @@ if page == 'Dashboard Overview':
 
                 by_day_ov = pivot_w.sum(axis=1)
                 if len(by_day_ov) > 0:
-                    worst_day_ov = by_day_ov.idxmax()
+                    by_day_sorted = by_day_ov.sort_values(ascending=False)
+                    day_breakdown = full_breakdown_html(
+                        list(by_day_sorted.items()), prefix='₱', show_pct=False
+                    )
                     chart_insight(
-                        f"<b>{worst_day_ov}</b> shows the darkest cells overall — the day with the "
-                        f"highest total waste cost in this view (₱{by_day_ov.max():,.2f})."
+                        f"Waste cost by day of week — {day_breakdown}. "
+                        f"<b>{by_day_sorted.index[0]}</b> shows the darkest cells overall — the highest "
+                        f"total waste cost in this view."
                     )
     else:
         st.info("No waste data yet. Go to the Database page to upload your waste log.")
@@ -1167,30 +1268,11 @@ elif page == 'Sales Analytics':
     st.caption("To add new sales records, go to the **Database** page — all data uploads now happen there.")
 
     def _sa_apply_filters(base_df, key_prefix):
-        """Renders its own Year/Quarter/Month filter row and returns the
-        filtered dataframe — kept local to each chart so no two
-        visualizations on this page share the same filter controls."""
-        df_f = base_df.copy()
-        if 'date' not in df_f.columns:
-            return df_f
-        c1, c2, c3 = st.columns(3)
-        yrs = sorted(df_f['date'].dt.year.dropna().unique().tolist(), reverse=True)
-        with c1:
-            yr = st.selectbox("Year", ['All'] + [str(y) for y in yrs], key=f'{key_prefix}_year')
-        with c2:
-            qtr = st.selectbox("Quarter", ['All','Q1','Q2','Q3','Q4'], key=f'{key_prefix}_qtr')
-        with c3:
-            months_opt = ['All','January','February','March','April','May','June',
-                          'July','August','September','October','November','December']
-            mon = st.selectbox("Month", months_opt, key=f'{key_prefix}_month')
-        if yr != 'All':
-            df_f = df_f[df_f['date'].dt.year == int(yr)]
-        if qtr != 'All':
-            qm = {'Q1':[1,2,3],'Q2':[4,5,6],'Q3':[7,8,9],'Q4':[10,11,12]}
-            df_f = df_f[df_f['date'].dt.month.isin(qm[qtr])]
-        if mon != 'All':
-            df_f = df_f[df_f['date'].dt.month_name() == mon]
-        return df_f
+        """Renders its own Year/Quarter/Month filter row (Month options
+        cascade off the chosen Quarter) and returns the filtered
+        dataframe — kept local to each chart so no two visualizations on
+        this page share the same filter controls."""
+        return render_year_quarter_month_filter(base_df, key_prefix, date_col='date')
 
     # ── Business Summary (moved from Dashboard Overview) ────────────────
     st.markdown("### Business Summary")
@@ -1256,9 +1338,14 @@ elif page == 'Sales Analytics':
 
             if len(daily) >= 2:
                 rev_trend = "up" if daily['7-day MA'].iloc[-1] > daily['7-day MA'].iloc[0] else "down"
+                peak_rev_row = daily.loc[daily['revenue'].idxmax()]
+                low_rev_row  = daily.loc[daily['revenue'].idxmin()]
                 chart_insight(
                     f"Revenue is trending <b>{rev_trend}</b>. Latest 7-day average: "
-                    f"<b>₱{daily['7-day MA'].iloc[-1]:,.2f}</b> per day."
+                    f"<b>₱{daily['7-day MA'].iloc[-1]:,.2f}</b> per day. Across the {len(daily)} periods shown, "
+                    f"the highest single revenue was <b>₱{peak_rev_row['revenue']:,.2f}</b> ({peak_rev_row['date']}), "
+                    f"the lowest was <b>₱{low_rev_row['revenue']:,.2f}</b> ({low_rev_row['date']}), and the "
+                    f"overall average was <b>₱{daily['revenue'].mean():,.2f}</b>."
                 )
         else:
             st.info("No sales records for this filter combination.")
@@ -1282,11 +1369,13 @@ elif page == 'Sales Analytics':
             st.plotly_chart(fig, use_container_width=True)
 
             if len(cat_rev) > 0:
-                top_cat_rev = cat_rev.sort_values('total', ascending=False).iloc[0]
-                cat_rev_pct = top_cat_rev['total'] / cat_rev['total'].sum() * 100
+                cat_rev_sorted = cat_rev.sort_values('total', ascending=False)
+                cat_rev_breakdown = full_breakdown_html(
+                    list(zip(cat_rev_sorted[cat_col], cat_rev_sorted['total'])), prefix='₱'
+                )
                 chart_insight(
-                    f"<b>{top_cat_rev[cat_col]}</b> is your top revenue category at "
-                    f"<b>{cat_rev_pct:.1f}%</b> of total sales (₱{top_cat_rev['total']:,.2f})."
+                    f"Revenue by category — {cat_rev_breakdown}. "
+                    f"<b>{cat_rev_sorted.iloc[0][cat_col]}</b> is your top revenue category."
                 )
         else:
             st.info("No sales records for this filter combination.")
@@ -1321,9 +1410,14 @@ elif page == 'Sales Analytics':
                 )
                 st.plotly_chart(fig, use_container_width=True)
 
+                dow_rev_sorted = dow_rev.dropna(subset=['revenue']).sort_values('revenue', ascending=False)
+                dow_breakdown = full_breakdown_html(
+                    list(zip(dow_rev_sorted['day'], dow_rev_sorted['revenue'])), prefix='₱'
+                )
                 chart_insight(
-                    f"<b>{dow_rev.loc[max_day,'day']}</b> generates the most revenue at "
-                    f"<b>₱{dow_rev.loc[max_day,'revenue']:,.2f}</b> — consider extra staffing or promos on this day."
+                    f"Revenue by day of week — {dow_breakdown}. "
+                    f"<b>{dow_rev.loc[max_day,'day']}</b> generates the most revenue — "
+                    f"consider extra staffing or promos on this day."
                 )
             else:
                 st.info("No sales data for this filter combination.")
@@ -1358,10 +1452,14 @@ elif page == 'Sales Analytics':
             st.plotly_chart(fig, use_container_width=True)
 
             if pivot.values.sum() > 0:
-                by_day_totals = pivot.sum(axis=1)
-                busiest_day_sa = by_day_totals.idxmax()
+                by_day_totals = pivot.sum(axis=1).sort_values(ascending=False)
+                busiest_day_sa = by_day_totals.index[0]
                 busiest_hour = pivot.sum(axis=0).idxmax()
+                day_txn_breakdown = full_breakdown_html(
+                    list(by_day_totals.items()), suffix=' txns', decimals=0, show_pct=False
+                )
                 chart_insight(
+                    f"Transactions by day — {day_txn_breakdown}. "
                     f"<b>{busiest_day_sa}</b> is the busiest day overall, and "
                     f"<b>{busiest_hour}:00</b> is the busiest hour across the week. "
                     f"Darker cells mark your peak traffic windows."
@@ -1413,9 +1511,13 @@ elif page == 'Sales Analytics':
             )
             st.plotly_chart(fig, use_container_width=True)
 
+            top5 = top.sort_values('quantity', ascending=False).head(5)
+            top5_html = full_breakdown_html(
+                list(zip(top5[item_col], top5['quantity'])), suffix=' units', decimals=0, show_pct=False
+            )
             chart_insight(
-                f"<b>{top.iloc[0][item_col]}</b> is the top seller with "
-                f"<b>{top.iloc[0]['quantity']:,}</b> units sold in this period."
+                f"Top 5 sellers — {top5_html}. Together, all {len(top)} items shown total "
+                f"<b>{top['quantity'].sum():,.0f}</b> units sold in this period."
             )
         else:
             st.info("No sales records for this filter combination.")
@@ -1442,9 +1544,13 @@ elif page == 'Sales Analytics':
             st.plotly_chart(fig, use_container_width=True)
 
             if dow['count'].sum() > 0:
-                busiest = dow.loc[dow['count'].idxmax()]
+                dow_sorted = dow.dropna(subset=['count']).sort_values('count', ascending=False)
+                dow_txn_html = full_breakdown_html(
+                    list(zip(dow_sorted['day'], dow_sorted['count'])), suffix=' txns', decimals=0, show_pct=False
+                )
                 chart_insight(
-                    f"<b>{busiest['day']}</b> is the busiest day with <b>{busiest['count']:,}</b> transactions."
+                    f"Transactions by day — {dow_txn_html}. "
+                    f"<b>{dow_sorted.iloc[0]['day']}</b> is the busiest day."
                 )
         else:
             st.info("No sales records for this filter combination.")
@@ -1493,8 +1599,7 @@ elif page == 'Sales Analytics':
             y_col, y_label = y_map[metric_choice]
 
             if y_col in monthly.columns:
-                plot_fn = px.bar if granularity == 'Yearly' else px.area
-                fig = plot_fn(monthly, x='period', y=y_col,
+                fig = px.line(monthly, x='period', y=y_col, markers=True,
                               color_discrete_sequence=[EARTH['accent']])
                 fig.update_layout(
                     plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
@@ -1506,10 +1611,15 @@ elif page == 'Sales Analytics':
                 if len(monthly) >= 2:
                     trend_delta = monthly[y_col].iloc[-1] - monthly[y_col].iloc[0]
                     trend_word = "grown" if trend_delta > 0 else "declined"
+                    peak_row = monthly.loc[monthly[y_col].idxmax()]
+                    low_row  = monthly.loc[monthly[y_col].idxmin()]
                     chart_insight(
                         f"{metric_choice} has <b>{trend_word}</b> from "
                         f"{monthly[y_col].iloc[0]:,.0f} to <b>{monthly[y_col].iloc[-1]:,.0f}</b> "
-                        f"across this range."
+                        f"across this range ({len(monthly)} {x_title.lower()}s shown). "
+                        f"The highest point was <b>{peak_row[y_col]:,.0f}</b> ({peak_row['period']}) and the "
+                        f"lowest was <b>{low_row[y_col]:,.0f}</b> ({low_row['period']}); average across the "
+                        f"range was <b>{monthly[y_col].mean():,.0f}</b>."
                     )
             else:
                 st.info(f"'{metric_choice}' isn't available in this dataset.")
@@ -1575,24 +1685,23 @@ elif page == 'Waste Analytics':
                         sel_reason = st.selectbox("Waste Reason", ['All'] + reasons, key=f'{key_prefix}_reason')
                 idx += 1
             with cols[idx]:
-                if 'date' in df_f.columns:
-                    periods = ['All time', 'Last 30 days', 'Last 90 days', 'This year']
-                    sel_period = st.selectbox("Time Period", periods, key=f'{key_prefix}_period')
+                if 'date' in df_f.columns and len(df_f) > 0:
+                    _min_d = df_f['date'].min().date()
+                    _max_d = df_f['date'].max().date()
+                    date_range = st.date_input(
+                        "Date Range", value=(_min_d, _max_d),
+                        min_value=_min_d, max_value=_max_d, key=f'{key_prefix}_daterange'
+                    )
                 else:
-                    sel_period = 'All time'
+                    date_range = None
 
             if sel_cat != 'All':
                 df_f = df_f[df_f['category'] == sel_cat]
             if sel_reason != 'All':
                 df_f = df_f[df_f['waste_reason'] == sel_reason]
-            if sel_period != 'All time' and 'date' in df_f.columns:
-                max_date = df_f['date'].max()
-                if sel_period == 'Last 30 days':
-                    df_f = df_f[df_f['date'] >= max_date - pd.Timedelta(days=30)]
-                elif sel_period == 'Last 90 days':
-                    df_f = df_f[df_f['date'] >= max_date - pd.Timedelta(days=90)]
-                elif sel_period == 'This year':
-                    df_f = df_f[df_f['date'].dt.year == max_date.year]
+            if date_range is not None and isinstance(date_range, tuple) and len(date_range) == 2 and 'date' in df_f.columns:
+                start_d, end_d = date_range
+                df_f = df_f[(df_f['date'].dt.date >= start_d) & (df_f['date'].dt.date <= end_d)]
             return df_f
 
         # ── Waste Summary (KPIs) — its own filter ───────────────────────────
@@ -1645,9 +1754,13 @@ elif page == 'Waste Analytics':
                 )
                 st.plotly_chart(fig, use_container_width=True)
 
+                top_items_3 = top_items.sort_values('Waste Cost', ascending=False).head(3)
+                top_items_html = full_breakdown_html(
+                    list(zip(top_items_3['Item'], top_items_3['Waste Cost'])), prefix='₱', show_pct=False
+                )
                 chart_insight(
-                    f"<b>{top_items.iloc[0]['Item']}</b> has the highest waste cost at "
-                    f"<b>₱{top_items.iloc[0]['Waste Cost']:,.2f}</b> in this filtered view."
+                    f"Top 3 by waste cost — {top_items_html}. Together, all {len(top_items)} items shown "
+                    f"total <b>₱{top_items['Waste Cost'].sum():,.2f}</b> in this filtered view."
                 )
             else:
                 st.info("No waste records for this filter combination.")
@@ -1686,11 +1799,13 @@ elif page == 'Waste Analytics':
                 )
                 st.plotly_chart(fig, use_container_width=True)
 
-                top_reason_wa = reason.iloc[-1]
-                reason_pct_wa = top_reason_wa['Waste Cost'] / reason['Waste Cost'].sum() * 100
+                reason_sorted = reason.sort_values('Waste Cost', ascending=False)
+                reason_breakdown = full_breakdown_html(
+                    list(zip(reason_sorted['Reason'], reason_sorted['Waste Cost'])), prefix='₱'
+                )
                 chart_insight(
-                    f"<b>{top_reason_wa['Reason']}</b> is the leading cause of waste at "
-                    f"<b>{reason_pct_wa:.1f}%</b> of total waste cost in this view."
+                    f"Waste cost by reason — {reason_breakdown}. "
+                    f"<b>{reason_sorted.iloc[0]['Reason']}</b> is the leading cause of waste in this view."
                 )
 
         st.markdown("")
@@ -1721,10 +1836,11 @@ elif page == 'Waste Analytics':
                 daily[f'{ma_window}-period avg'] = daily['waste_cost'].rolling(ma_window, min_periods=1).mean()
 
                 fig = go.Figure()
-                fig.add_trace(go.Bar(
+                fig.add_trace(go.Scatter(
                     x=daily['date'], y=daily['waste_cost'],
                     name=f'{trend_granularity} Waste Cost',
-                    marker_color=EARTH['light'], opacity=0.6
+                    mode='lines+markers',
+                    line=dict(color=EARTH['light'], width=1.5)
                 ))
                 fig.add_trace(go.Scatter(
                     x=daily['date'], y=daily[f'{ma_window}-period avg'],
@@ -1742,9 +1858,15 @@ elif page == 'Waste Analytics':
 
                 if len(daily) >= 2:
                     trend_dir_wa = "rising" if daily[f'{ma_window}-period avg'].iloc[-1] > daily[f'{ma_window}-period avg'].iloc[0] else "falling"
+                    peak_row_wa = daily.loc[daily['waste_cost'].idxmax()]
+                    low_row_wa  = daily.loc[daily['waste_cost'].idxmin()]
                     chart_insight(
-                        f"The waste cost trend is <b>{trend_dir_wa}</b> over this range. "
-                        f"Latest {ma_window}-period average: <b>₱{daily[f'{ma_window}-period avg'].iloc[-1]:,.2f}</b>.",
+                        f"The waste cost trend is <b>{trend_dir_wa}</b> over this range ({len(daily)} "
+                        f"{trend_granularity.lower()} periods). Latest {ma_window}-period average: "
+                        f"<b>₱{daily[f'{ma_window}-period avg'].iloc[-1]:,.2f}</b>. The highest single period was "
+                        f"<b>₱{peak_row_wa['waste_cost']:,.2f}</b> ({peak_row_wa['date']}), the lowest was "
+                        f"<b>₱{low_row_wa['waste_cost']:,.2f}</b> ({low_row_wa['date']}), and the overall "
+                        f"average was <b>₱{daily['waste_cost'].mean():,.2f}</b> per {trend_granularity.lower()[:-2]}.",
                         'warn' if trend_dir_wa == 'rising' else 'good'
                     )
             else:
@@ -1773,9 +1895,14 @@ elif page == 'Waste Analytics':
                     margin=dict(l=0,r=0,t=10,b=0)
                 )
                 st.plotly_chart(fig, use_container_width=True)
+                dow_waste_sorted = dow_waste.sort_values('Waste Cost', ascending=False)
+                dow_waste_html = full_breakdown_html(
+                    list(zip(dow_waste_sorted['Day'], dow_waste_sorted['Waste Cost'])), prefix='₱'
+                )
                 chart_insight(
-                    f"<b>{dow_waste.loc[worst_day_idx,'Day']}</b> has the highest waste cost "
-                    f"(₱{dow_waste.loc[worst_day_idx,'Waste Cost']:,.2f}) — consider adjusting prep quantities on that day.",
+                    f"Waste cost by day of week — {dow_waste_html}. "
+                    f"<b>{dow_waste.loc[worst_day_idx,'Day']}</b> has the highest waste cost — "
+                    f"consider adjusting prep quantities on that day.",
                     'warn'
                 )
             else:
@@ -1852,10 +1979,14 @@ elif page == 'Waste Analytics':
 
                     by_day_wa = pivot_hw.sum(axis=1)
                     if len(by_day_wa) > 0:
-                        worst_day_wa = by_day_wa.idxmax()
+                        by_day_wa_sorted = by_day_wa.sort_values(ascending=False)
+                        by_day_wa_html = full_breakdown_html(
+                            list(by_day_wa_sorted.items()), prefix='₱', show_pct=False
+                        )
                         chart_insight(
-                            f"<b>{worst_day_wa}</b> shows the darkest cells — the highest total waste cost "
-                            f"in this view (₱{by_day_wa.max():,.2f})."
+                            f"Waste cost by day — {by_day_wa_html}. "
+                            f"<b>{by_day_wa_sorted.index[0]}</b> shows the darkest cells — the highest total "
+                            f"waste cost in this view."
                         )
 
         st.markdown("")
@@ -1898,27 +2029,12 @@ elif page == 'Menu Performance':
                'item_name' if 'item_name' in src.columns else None
 
     def _mp_apply_filters(base_df, key_prefix):
-        """Renders its own Year/Quarter/Month + Category filter row and
-        returns the filtered dataframe — kept local to each chart so no
-        two visualizations on this page share the same filter controls."""
-        df_f = base_df.copy()
-        if 'date' in df_f.columns:
-            fc1, fc2, fc3 = st.columns(3)
-            with fc1:
-                yrs = sorted(df_f['date'].dt.year.dropna().unique(), reverse=True)
-                yr = st.selectbox("Year", ['All'] + [str(y) for y in yrs], key=f'{key_prefix}_year')
-            with fc2:
-                qtr = st.selectbox("Quarter", ['All','Q1','Q2','Q3','Q4'], key=f'{key_prefix}_qtr')
-            with fc3:
-                months_opt = ['All'] + list(pd.date_range('2020-01','2020-12',freq='MS').strftime('%B'))
-                mon = st.selectbox("Month", months_opt, key=f'{key_prefix}_month')
-            if yr != 'All':
-                df_f = df_f[df_f['date'].dt.year == int(yr)]
-            if qtr != 'All':
-                q_map = {'Q1':[1,2,3],'Q2':[4,5,6],'Q3':[7,8,9],'Q4':[10,11,12]}
-                df_f = df_f[df_f['date'].dt.month.isin(q_map[qtr])]
-            if mon != 'All':
-                df_f = df_f[df_f['date'].dt.month_name() == mon]
+        """Renders its own Year/Quarter/Month (Month cascades off Quarter)
+        + Category filter row and returns the filtered dataframe — kept
+        local to each chart so no two visualizations on this page share
+        the same filter controls."""
+        df_f = render_year_quarter_month_filter(base_df, key_prefix, date_col='date') \
+            if 'date' in base_df.columns else base_df.copy()
         if 'category' in df_f.columns:
             cats = sorted(df_f['category'].dropna().unique().tolist())
             sel_cat = st.selectbox("Category", ['All'] + cats, key=f'{key_prefix}_cat')
@@ -2012,9 +2128,13 @@ elif page == 'Menu Performance':
                 total_items_mp = int(dist['Count'].sum())
                 reconsider_ct = int(dist.loc[dist['Performance']=='Reconsider','Count'].sum())
                 reconsider_pct = (reconsider_ct / total_items_mp * 100) if total_items_mp else 0
+                perf_breakdown = full_breakdown_html(
+                    list(zip(dist['Performance'], dist['Count'])), decimals=0
+                )
                 chart_insight(
-                    f"Out of <b>{total_items_mp}</b> menu items, <b>{reconsider_ct}</b> "
-                    f"({reconsider_pct:.1f}%) are flagged as <b>Reconsider</b> — these may need a menu review.",
+                    f"Out of <b>{total_items_mp}</b> menu items — {perf_breakdown}. "
+                    f"<b>{reconsider_ct}</b> item(s) ({reconsider_pct:.1f}%) are flagged as "
+                    f"<b>Reconsider</b> — these may need a menu review.",
                     'warn' if reconsider_pct > 20 else 'info'
                 )
 
@@ -2096,9 +2216,13 @@ elif page == 'Menu Performance':
             st.plotly_chart(fig, use_container_width=True)
 
             top20_sorted = top20.sort_values('total', ascending=False)
+            top5_profit = top20_sorted.head(5)
+            top5_profit_html = full_breakdown_html(
+                list(zip(top5_profit[item_col], top5_profit['total'])), prefix='₱', show_pct=False
+            )
             chart_insight(
-                f"<b>{top20_sorted.iloc[0][item_col]}</b> generates the most revenue at "
-                f"<b>₱{top20_sorted.iloc[0]['total']:,.2f}</b> in this filtered view."
+                f"Top 5 by revenue — {top5_profit_html}. Together, all {len(top20)} items shown here "
+                f"total <b>₱{top20['total'].sum():,.2f}</b> in this filtered view."
             )
         else:
             st.info("No revenue data for this filter combination yet.")
@@ -2196,23 +2320,32 @@ elif page == 'Menu Performance':
                 )
                 st.plotly_chart(fig, use_container_width=True)
 
+                overall_alert_counts = sf['Alert Level'].value_counts().reindex(['Low','Medium','High']).fillna(0)
+                overall_alert_html = full_breakdown_html(
+                    list(zip(overall_alert_counts.index, overall_alert_counts.values)), decimals=0
+                )
                 high_by_cat = sf[sf['Alert Level'] == 'High'].groupby('category').size()
                 if len(high_by_cat) > 0:
                     top_alert_cat   = high_by_cat.idxmax()
                     top_alert_count = int(high_by_cat.max())
+                    high_by_cat_html = full_breakdown_html(
+                        list(high_by_cat.sort_values(ascending=False).items()), decimals=0, show_pct=False
+                    )
                     st.markdown(f"""
                     <div style='background:#FFF8F3;border-left:4px solid #6F4E37;
                                 padding:16px 20px;border-radius:8px;margin-top:8px'>
-                        <b>Alert:</b> <b>{top_alert_cat}</b> has the most High Alert items
-                        (<b>{top_alert_count} records</b>).
+                        <b>Alert Level overall:</b> {overall_alert_html}.<br/>
+                        <b>High Alert by category:</b> {high_by_cat_html}.<br/>
+                        <b>{top_alert_cat}</b> has the most High Alert items (<b>{top_alert_count} records</b>).
                         Immediately review ingredient freshness and storage for this category.
                         Consider adjusting order frequency to reduce spoilage risk.
                     </div>
                     """, unsafe_allow_html=True)
                 else:
-                    st.markdown("""
+                    st.markdown(f"""
                     <div style='background:#F0EDE2;border-left:4px solid #6B8E4E;
                                 padding:16px 20px;border-radius:8px;margin-top:8px'>
+                        <b>Alert Level overall:</b> {overall_alert_html}.<br/>
                         <b>Good news!</b> No High Alert items detected.
                         Current ingredient management is working well.
                     </div>
@@ -2367,8 +2500,9 @@ elif page == 'Inventory Status':
 
                 st.markdown("")
                 chart_insight(
-                    f"<b>{len(restock_now)}</b> ingredient(s) need restocking right now, and "
-                    f"<b>{len(restock_soon)}</b> should be reordered this week based on their current alert level. "
+                    f"<b>{len(restock_now)}</b> ingredient(s) need restocking right now, "
+                    f"<b>{len(restock_soon)}</b> should be reordered this week, and "
+                    f"<b>{len(well_stocked)}</b> are currently well stocked. "
                     "To add a brand-new ingredient that isn't tracked yet, upload it on the Database page — "
                     "it will show up here once it has a purchase record."
                 )
@@ -2394,10 +2528,16 @@ elif page == 'Inventory Status':
             st.plotly_chart(fig, use_container_width=True)
 
             high_ct = int(dist.loc[dist['Alert Level']=='High Alert','Count'].sum())
+            alert_dist_sorted = dist[dist['Count'] > 0].sort_values('Count', ascending=False)
+            alert_dist_html = full_breakdown_html(
+                list(zip(alert_dist_sorted['Alert Level'], alert_dist_sorted['Count'])), decimals=0
+            )
             if high_ct > 0:
-                chart_insight(f"<b>{high_ct}</b> item(s) are at High Alert and need urgent attention.", 'warn')
+                chart_insight(f"Inventory by alert level — {alert_dist_html}. "
+                              f"<b>{high_ct}</b> item(s) are at High Alert and need urgent attention.", 'warn')
             else:
-                chart_insight("No items are currently at High Alert. Current ingredient management is working well.", 'good')
+                chart_insight(f"Inventory by alert level — {alert_dist_html}. "
+                              f"No items are currently at High Alert. Current ingredient management is working well.", 'good')
 
         st.markdown("")
 
@@ -2422,9 +2562,13 @@ elif page == 'Inventory Status':
                 )
                 st.plotly_chart(fig2, use_container_width=True)
 
+                val_by_ing_3 = val_by_ing.sort_values('Value', ascending=False).head(3)
+                val_by_ing_html = full_breakdown_html(
+                    list(zip(val_by_ing_3['Ingredient'], val_by_ing_3['Value'])), prefix='₱', show_pct=False
+                )
                 chart_insight(
-                    f"<b>{val_by_ing.iloc[0]['Ingredient']}</b> ties up the most inventory value at "
-                    f"<b>₱{val_by_ing.iloc[0]['Value']:,.2f}</b>."
+                    f"Top 3 by inventory value — {val_by_ing_html}. Together, all {len(val_by_ing)} "
+                    f"ingredients shown tie up <b>₱{val_by_ing['Value'].sum():,.2f}</b> in inventory."
                 )
 
         st.markdown("")
@@ -2447,14 +2591,22 @@ elif page == 'Inventory Status':
                 st.plotly_chart(fig3, use_container_width=True)
 
                 near_exp = inv[inv['days_until_expiration'] <= 2]
+                batch_by_alert = inv['alert_level'].value_counts()
+                batch_by_alert_html = full_breakdown_html(
+                    list(batch_by_alert.sort_values(ascending=False).items()), decimals=0
+                )
                 if len(near_exp) > 0:
                     chart_insight(
+                        f"Batches by alert level — {batch_by_alert_html}. "
                         f"<b>{len(near_exp)}</b> batch(es) have 2 days or less until expiration — "
                         f"the points furthest to the left need immediate attention.",
                         'warn'
                     )
                 else:
-                    chart_insight("No batches are within 2 days of expiring right now.", 'good')
+                    chart_insight(
+                        f"Batches by alert level — {batch_by_alert_html}. "
+                        f"No batches are within 2 days of expiring right now.", 'good'
+                    )
 
         st.markdown("")
 
@@ -2463,48 +2615,56 @@ elif page == 'Inventory Status':
             st.markdown("#### Inventory Value Over Time")
             st.caption("Uses the full purchase history (up to 3 years), independent of the 30-day snapshot above.")
             if 'purchase_date' in inv_hist.columns and 'total_cost' in inv_hist.columns:
-                vcol1, vcol2 = st.columns(2)
-                with vcol1:
-                    if 'ingredient' in inv_hist.columns:
-                        ings = sorted(inv_hist['ingredient'].dropna().unique().tolist())
-                        sel_ing = st.selectbox("Ingredient", ['All'] + ings, key='inv_value_ingredient')
-                    else:
-                        sel_ing = 'All'
-                with vcol2:
-                    sel_range = st.selectbox(
-                        "Time Period", ['Last 6 Months', 'Last 1 Year', 'Last 3 Years', 'All Time'],
-                        index=2, key='inv_value_period'
-                    )
+                if 'ingredient' in inv_hist.columns:
+                    ings = sorted(inv_hist['ingredient'].dropna().unique().tolist())
+                    sel_ing = st.selectbox("Ingredient", ['All'] + ings, key='inv_value_ingredient')
+                else:
+                    sel_ing = 'All'
 
                 inv_time = inv_hist.copy()
                 if sel_ing != 'All':
                     inv_time = inv_time[inv_time['ingredient'] == sel_ing]
 
-                max_pd = inv_time['purchase_date'].max()
-                if sel_range == 'Last 6 Months':
-                    inv_time = inv_time[inv_time['purchase_date'] >= max_pd - pd.DateOffset(months=6)]
-                elif sel_range == 'Last 1 Year':
-                    inv_time = inv_time[inv_time['purchase_date'] >= max_pd - pd.DateOffset(years=1)]
-                elif sel_range == 'Last 3 Years':
-                    inv_time = inv_time[inv_time['purchase_date'] >= max_pd - pd.DateOffset(years=3)]
-                # 'All Time' — no filtering
+                inv_time, inv_value_gran = render_daily_weekly_yearly_filter(
+                    inv_time, 'inv_value', date_col='purchase_date'
+                )
 
-                trend = inv_time.groupby(inv_time['purchase_date'].dt.to_period('W').dt.start_time)['total_cost'].sum().reset_index()
+                if inv_value_gran == 'Daily':
+                    inv_time['period'] = inv_time['purchase_date'].dt.date
+                elif inv_value_gran == 'Yearly':
+                    inv_time['period'] = inv_time['purchase_date'].dt.year
+                else:
+                    inv_time['period'] = inv_time['purchase_date'].dt.to_period('W').dt.start_time
+
+                trend = inv_time.groupby('period')['total_cost'].sum().reset_index()
                 trend.columns = ['Date', 'Value']
-                fig4 = px.area(trend, x='Date', y='Value', color_discrete_sequence=[EARTH['accent']])
+                trend = trend.sort_values('Date')
+                fig4 = px.line(trend, x='Date', y='Value', markers=True,
+                                color_discrete_sequence=[EARTH['accent']])
                 fig4.update_layout(
                     plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
                     yaxis=dict(tickprefix='₱', tickformat=',.0f'),
+                    xaxis_title=inv_value_gran,
                     margin=dict(l=0, r=0, t=10, b=0)
                 )
                 st.plotly_chart(fig4, use_container_width=True)
 
-                if len(trend) >= 2:
+                if len(trend) == 0:
+                    st.info("No inventory records for this selection.")
+                elif len(trend) >= 2:
                     val_dir = "increasing" if trend['Value'].iloc[-1] > trend['Value'].iloc[0] else "decreasing"
+                    highest_row = trend.loc[trend['Value'].idxmax()]
+                    lowest_row  = trend.loc[trend['Value'].idxmin()]
                     chart_insight(
-                        f"Inventory value is <b>{val_dir}</b> over this period. "
-                        f"Latest weekly value: <b>₱{trend['Value'].iloc[-1]:,.2f}</b>."
+                        f"Inventory value is <b>{val_dir}</b> over this {inv_value_gran.lower()} view. "
+                        f"It peaked at <b>₱{highest_row['Value']:,.2f}</b> ({highest_row['Date']}) and was "
+                        f"lowest at <b>₱{lowest_row['Value']:,.2f}</b> ({lowest_row['Date']}). "
+                        f"Latest value: <b>₱{trend['Value'].iloc[-1]:,.2f}</b> "
+                        f"(average across all periods shown: ₱{trend['Value'].mean():,.2f})."
                     )
+                else:
+                    chart_insight(f"Only one {inv_value_gran.lower()} period in this selection: "
+                                   f"<b>₱{trend['Value'].iloc[0]:,.2f}</b>.")
 
         st.markdown("")
 
@@ -2935,10 +3095,12 @@ elif page == 'Forecast & Predictions':
 
             st.markdown("")
             chart_insight(
-                f"This guide is calibrated for <b>{today_day_name}</b>. "
-                f"Items under <b style='color:#2E7D32'>Prepare More</b> have historically "
-                f"high demand on {today_day_name}s — increase your batch size. "
-                f"Items under <b style='color:#C62828'>Prepare Less</b> tend to have lower demand — "
+                f"This guide is calibrated for <b>{today_day_name}</b>: "
+                f"<b style='color:#2E7D32'>{len(prepare_more)} item(s) to Prepare More</b>, "
+                f"<b style='color:#6F4E37'>{len(prepare_normal)} item(s) to Prepare As Usual</b>, and "
+                f"<b style='color:#C62828'>{len(prepare_less)} item(s) to Prepare Less</b>. "
+                f"Items under Prepare More have historically high demand on {today_day_name}s — "
+                f"increase your batch size. Items under Prepare Less tend to have lower demand — "
                 "prepare in smaller batches to avoid waste."
             )
 
@@ -3028,8 +3190,9 @@ elif page == 'Forecast & Predictions':
 
                 st.markdown("")
                 chart_insight(
-                    f"<b>{len(restock_now_fc)}</b> ingredient(s) need restocking right now, and "
-                    f"<b>{len(restock_soon_fc)}</b> should be reordered this week. See the "
+                    f"<b>{len(restock_now_fc)}</b> ingredient(s) need restocking right now, "
+                    f"<b>{len(restock_soon_fc)}</b> should be reordered this week, and "
+                    f"<b>{len(well_stocked_fc)}</b> are currently well stocked. See the "
                     "Inventory Status page for the full breakdown."
                 )
             else:
@@ -4435,4 +4598,3 @@ elif page == 'Database':
                     st.error(f"Could not load menu items: {e}")
 
         conn.close()
-
