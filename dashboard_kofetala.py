@@ -482,6 +482,36 @@ def render_daily_weekly_yearly_filter(df, key_prefix, date_col='date', show_gran
         df_f = df_f[(df_f[date_col].dt.date >= start_d) & (df_f[date_col].dt.date <= end_d)]
     return df_f, granularity
 
+def render_custom_range_picker(df, date_col, key_prefix, bucket='day'):
+    """Renders the date-range picker shown when 'Custom Range' is chosen in
+    a 'View by' dropdown. Filters df to the picked range and adds a
+    'period' column bucketed by day/week/month. Returns (filtered_df,
+    x_axis_label)."""
+    df = df.copy()
+    if date_col not in df.columns or len(df) == 0:
+        st.date_input("Custom Date Range", value=(date.today(), date.today()), key=f'{key_prefix}_customrange')
+        df['period'] = df[date_col] if date_col in df.columns else []
+        return df, 'Date'
+    min_d = df[date_col].min().date()
+    max_d = df[date_col].max().date()
+    sel_range = st.date_input(
+        "Custom Date Range", value=(min_d, max_d), min_value=min_d, max_value=max_d,
+        key=f'{key_prefix}_customrange'
+    )
+    if isinstance(sel_range, tuple) and len(sel_range) == 2:
+        start_d, end_d = sel_range
+        df = df[(df[date_col].dt.date >= start_d) & (df[date_col].dt.date <= end_d)]
+    if bucket == 'week':
+        df['period'] = df[date_col].dt.to_period('W').dt.start_time
+        x_label = 'Week'
+    elif bucket == 'month':
+        df['period'] = df[date_col].dt.to_period('M').dt.to_timestamp()
+        x_label = 'Month'
+    else:
+        df['period'] = df[date_col].dt.date
+        x_label = 'Date'
+    return df, x_label
+
 # ============================================================================
 # DATA LOADERS — cached so they only load once per session
 # ============================================================================
@@ -948,12 +978,14 @@ def run_rf_predictions(df):
 
 if page == 'Dashboard Overview':
 
-    # ── Reuse the same DB-first waste_df loaded once near the top of this
-    # file (identical source used by the "Database" page), instead of a
-    # separate CSV-only loader. This keeps record counts always in sync
-    # between Dashboard Overview and Database — no more mismatched numbers
+    # ── Reuse the same DB-first dataframes loaded once near the top of this
+    # file (identical source used by every other page), instead of separate
+    # loaders — keeps record counts always in sync with the Database page
     # after an upload or delete.
     overview_waste = waste_df.copy() if waste_df is not None else pd.DataFrame()
+    overview_sales = sales_df.copy() if sales_df is not None else pd.DataFrame()
+    overview_inv   = inventory_df.copy() if inventory_df is not None else pd.DataFrame()
+    overview_menu  = menu_df.copy() if menu_df is not None else pd.DataFrame()
 
     # ── Greeting hero banner — with today's date and day ────────────────
     _now      = datetime.now()
@@ -961,54 +993,103 @@ if page == 'Dashboard Overview':
     _greeting = "Good Morning" if _hour < 12 else ("Good Afternoon" if _hour < 18 else "Good Evening")
     _day_name = _now.strftime('%A')           # e.g. Wednesday
     _date_str = _now.strftime('%B %d, %Y')   # e.g. September 03, 2026
-    _total_waste_for_banner = overview_waste['total_waste_cost'].sum() if (overview_waste is not None and 'total_waste_cost' in overview_waste.columns) else 0
     hero_banner(
         f"{_greeting}, Kôfētala Bistro — {_day_name}, {_date_str}",
-        "Waste Reduction Overview",
-        f"Tracking {len(overview_waste):,} waste records totaling ₱{_total_waste_for_banner:,.2f} across your operations. "
-        f"Here is your performance summary."
+        "Business Overview",
+        f"A quick snapshot across Sales, Waste, Inventory, and Menu — "
+        f"{len(overview_sales):,} sales, {len(overview_waste):,} waste, "
+        f"{len(overview_inv):,} inventory, and {len(overview_menu):,} menu records tracked. "
+        f"Visit each dedicated page in the sidebar for the full breakdown."
     )
 
-    # ── KPI cards — waste-focused Business Overview ─────────────────────
+    # ── KPI cards — one primary + one secondary metric per data area ────
     st.markdown("### Business Overview")
     col1, col2, col3, col4 = st.columns(4)
-
     with col1:
-        stat_card("Waste Records", f"{len(overview_waste):,}" if overview_waste is not None else "0")
+        rev = overview_sales['total'].sum() if 'total' in overview_sales.columns else 0
+        stat_card("Sales · Revenue", f"₱{rev:,.2f}")
     with col2:
-        total_waste_cost = overview_waste['total_waste_cost'].sum() if (overview_waste is not None and 'total_waste_cost' in overview_waste.columns) else 0
-        stat_card("Total Waste Cost", f"₱{total_waste_cost:,.2f}")
+        total_waste_cost = overview_waste['total_waste_cost'].sum() if 'total_waste_cost' in overview_waste.columns else 0
+        stat_card("Waste · Total Cost", f"₱{total_waste_cost:,.2f}")
     with col3:
-        total_units_wasted = overview_waste['quantity_wasted'].sum() if (overview_waste is not None and 'quantity_wasted' in overview_waste.columns) else 0
-        stat_card("Units Wasted", f"{int(total_units_wasted):,}")
+        inv_value = overview_inv['total_cost'].sum() if 'total_cost' in overview_inv.columns else 0
+        stat_card("Inventory · Value", f"₱{inv_value:,.2f}")
     with col4:
-        if overview_waste is not None and 'date' in overview_waste.columns and len(overview_waste) > 0:
-            waste_days = (overview_waste['date'].max() - overview_waste['date'].min()).days
-            stat_card("Date Range", f"{waste_days} days")
+        stat_card("Menu · Items", f"{len(overview_menu):,}")
+
+    col5, col6, col7, col8 = st.columns(4)
+    with col5:
+        stat_card("Sales · Records", f"{len(overview_sales):,}")
+    with col6:
+        total_units_wasted = overview_waste['quantity_wasted'].sum() if 'quantity_wasted' in overview_waste.columns else 0
+        stat_card("Waste · Units Wasted", f"{int(total_units_wasted):,}")
+    with col7:
+        oos = int((overview_inv['quantity'] <= 0).sum()) if 'quantity' in overview_inv.columns else 0
+        stat_card("Inventory · Out of Stock", f"{oos:,}")
+    with col8:
+        n_cats_menu = overview_menu['category'].nunique() if 'category' in overview_menu.columns else 0
+        stat_card("Menu · Categories", f"{n_cats_menu:,}")
+
+    st.markdown("")
+    st.markdown("### Snapshots")
+    st.caption(
+        "One quick chart per area — open **Sales Analytics**, **Waste Analytics**, "
+        "**Inventory Status**, or **Menu Performance** in the sidebar for the full breakdown and filters."
+    )
+
+    # ============================================================================
+    # SALES SNAPSHOT
+    # ============================================================================
+    with st.container(border=True):
+        st.markdown("#### Sales Snapshot")
+        if len(overview_sales) > 0 and 'date' in overview_sales.columns and 'total' in overview_sales.columns:
+            sm = overview_sales.copy()
+            sm['month'] = sm['date'].dt.to_period('M').dt.to_timestamp()
+            sm_rev = sm.groupby('month')['total'].sum().reset_index()
+            sm_rev.columns = ['Month', 'Revenue']
+            fig = px.area(sm_rev, x='Month', y='Revenue', color_discrete_sequence=[EARTH['primary']])
+            fig.update_layout(
+                plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+                yaxis=dict(tickprefix='₱', tickformat=',.0f'),
+                margin=dict(l=0, r=0, t=10, b=0)
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            if len(sm_rev) >= 2:
+                sales_dir = "growing" if sm_rev['Revenue'].iloc[-1] > sm_rev['Revenue'].iloc[0] else "declining"
+                chart_insight(
+                    f"Monthly revenue is <b>{sales_dir}</b>. Latest month "
+                    f"({sm_rev.iloc[-1]['Month'].strftime('%B %Y')}) recorded "
+                    f"<b>₱{sm_rev.iloc[-1]['Revenue']:,.2f}</b> in revenue. "
+                    f"See <b>Sales Analytics</b> for the full breakdown.",
+                    'good' if sales_dir == 'growing' else 'warn'
+                )
         else:
-            stat_card("Date Range", "N/A")
+            st.info("No sales data yet. Go to the Database page to upload your sales log.")
 
     st.markdown("")
 
-    # ── Waste-focused visualizations ────────────────────────────────────
-    st.markdown("### Waste Overview")
-
-    if overview_waste is not None and len(overview_waste) > 0 and 'date' in overview_waste.columns:
-
-        # Monthly Waste Cost Trend — filterable by Year and granularity
-        with st.container(border=True):
-            st.markdown("#### Waste Cost Trend")
+    # ============================================================================
+    # WASTE SNAPSHOT
+    # ============================================================================
+    with st.container(border=True):
+        st.markdown("#### Waste Snapshot")
+        if len(overview_waste) > 0 and 'date' in overview_waste.columns and 'total_waste_cost' in overview_waste.columns:
             ow_years = sorted(overview_waste['date'].dt.year.dropna().unique().tolist(), reverse=True)
 
-            # Filters — View By controls what other filters appear:
-            # Yearly → no Year/Month filter (shows all years)
-            # Monthly → Year filter only
-            # Weekly → Year + Month filter (for Week 1-4 drill-down)
+            # Filters — View By controls what other filters appear
             tf1, tf2, tf3 = st.columns(3)
             with tf1:
-                ow_granularity = st.selectbox("View By", ['Weekly','Monthly','Yearly'], index=1, key='ov_trend_gran')
+                ow_granularity = st.selectbox("View By", ['Weekly','Monthly','Yearly','Custom Range'], index=1, key='ov_trend_gran')
             with tf2:
-                if ow_granularity != 'Yearly':
+                if ow_granularity == 'Custom Range':
+                    ow_custom_range = st.date_input(
+                        "Date Range",
+                        value=(overview_waste['date'].min().date(), overview_waste['date'].max().date()),
+                        min_value=overview_waste['date'].min().date(), max_value=overview_waste['date'].max().date(),
+                        key='ov_trend_customrange'
+                    )
+                    ow_sel_year = 'All'
+                elif ow_granularity != 'Yearly':
                     ow_sel_year = st.selectbox("Year", ['All'] + [str(y) for y in ow_years], key='ov_trend_year')
                 else:
                     st.empty()
@@ -1024,17 +1105,20 @@ if page == 'Dashboard Overview':
 
             # Apply filters
             ow = overview_waste.copy()
-            if ow_sel_year != 'All':
+            if ow_granularity != 'Custom Range' and ow_sel_year != 'All':
                 ow = ow[ow['date'].dt.year == int(ow_sel_year)]
 
-            if ow_granularity == 'Weekly':
+            if ow_granularity == 'Custom Range':
+                if isinstance(ow_custom_range, tuple) and len(ow_custom_range) == 2:
+                    ow = ow[(ow['date'].dt.date >= ow_custom_range[0]) & (ow['date'].dt.date <= ow_custom_range[1])]
+                ow['period'] = ow['date'].dt.date
+                x_lbl = 'Date'
+            elif ow_granularity == 'Weekly':
                 if ow_sel_month != 'All months':
-                    # Filter to selected month then show Week 1, 2, 3, 4
                     ow = ow[ow['date'].dt.month_name() == ow_sel_month]
                     ow['period'] = 'Week ' + (((ow['date'].dt.day - 1) // 7) + 1).clip(upper=4).astype(str)
                     x_lbl = f'Week of {ow_sel_month}'
                 else:
-                    # Show all weeks across all months
                     ow['period'] = ow['date'].dt.to_period('W').apply(lambda r: r.start_time)
                     x_lbl = 'Week'
             elif ow_granularity == 'Yearly':
@@ -1047,7 +1131,6 @@ if page == 'Dashboard Overview':
             trend_df = ow.groupby('period')['total_waste_cost'].sum().reset_index()
             trend_df.columns = [x_lbl, 'Waste Cost']
             if ow_granularity == 'Weekly' and ow_sel_month != 'All months':
-                # Sort Week 1 → Week 2 → Week 3 → Week 4
                 trend_df = trend_df.sort_values(x_lbl, key=lambda s: s.str.extract(r'(\d+)')[0].astype(int))
 
             if len(trend_df) == 0:
@@ -1073,190 +1156,98 @@ if page == 'Dashboard Overview':
                             _lbl = str(latest_p[x_lbl])
                         elif ow_granularity == 'Weekly' and ow_sel_month != 'All months':
                             _lbl = str(latest_p[x_lbl])  # e.g. "Week 4"
+                        elif ow_granularity == 'Custom Range':
+                            _lbl = pd.to_datetime(str(latest_p[x_lbl])).strftime('%b %d, %Y')
                         else:
                             _lbl = pd.to_datetime(str(latest_p[x_lbl])).strftime('%B %Y')
                     except Exception:
                         _lbl = str(latest_p[x_lbl])
-                    highest_p = trend_df.loc[trend_df['Waste Cost'].idxmax()]
-                    lowest_p  = trend_df.loc[trend_df['Waste Cost'].idxmin()]
+                    _period_word = 'day' if ow_granularity == 'Custom Range' else (
+                        ow_granularity.lower()[:-2] if ow_granularity.endswith('ly') else ow_granularity.lower()
+                    )
                     chart_insight(
-                        f"Waste cost is <b>{_direction}</b> over time. The most recent {ow_granularity.lower()} "
+                        f"Waste cost is <b>{_direction}</b> over time. The most recent {_period_word} "
                         f"({_lbl}) recorded <b>₱{latest_p['Waste Cost']:,.2f}</b> in waste. "
-                        f"Across all {len(trend_df)} periods shown, the highest was "
-                        f"<b>₱{highest_p['Waste Cost']:,.2f}</b> ({highest_p[x_lbl]}), the lowest was "
-                        f"<b>₱{lowest_p['Waste Cost']:,.2f}</b> ({lowest_p[x_lbl]}), and the average was "
-                        f"<b>₱{trend_df['Waste Cost'].mean():,.2f}</b> per {ow_granularity.lower()[:-2] if ow_granularity.endswith('ly') else ow_granularity.lower()}.",
+                        f"See <b>Waste Analytics</b> for category and item-level breakdowns.",
                         'warn' if _direction == 'increasing' else 'good'
                     )
+        else:
+            st.info("No waste data yet. Go to the Database page to upload your waste log.")
 
-        st.markdown("")
-        with st.container(border=True):
-            st.markdown("#### Waste Cost by Category")
-            if 'category' in overview_waste.columns:
-                cf1, cf2 = st.columns(2)
-                with cf1:
-                    cat_yr = st.selectbox("Year", ['All'] + [str(y) for y in ow_years], key='ov_cat_year')
-                with cf2:
-                    cat_months = ['All','January','February','March','April','May','June',
-                                 'July','August','September','October','November','December']
-                    cat_mon = st.selectbox("Month", cat_months, key='ov_cat_month')
-                ow_cat = overview_waste.copy()
-                if cat_yr != 'All':
-                    ow_cat = ow_cat[ow_cat['date'].dt.year == int(cat_yr)]
-                if cat_mon != 'All':
-                    ow_cat = ow_cat[ow_cat['date'].dt.month_name() == cat_mon]
-                cat_w = ow_cat.groupby('category')['total_waste_cost'].sum().reset_index()
-                fig = px.pie(cat_w, values='total_waste_cost', names='category',
-                             hole=0.45, color_discrete_sequence=CHART_COLORS)
-                fig.update_traces(textposition='outside', textinfo='percent+label')
-                fig.update_layout(
-                    showlegend=True, margin=dict(l=0, r=0, t=10, b=0),
-                    paper_bgcolor='rgba(0,0,0,0)'
-                )
-                st.plotly_chart(fig, use_container_width=True)
+    st.markdown("")
 
-                if len(cat_w) > 0:
-                    cat_w_sorted = cat_w.sort_values('total_waste_cost', ascending=False)
-                    breakdown = full_breakdown_html(
-                        list(zip(cat_w_sorted['category'], cat_w_sorted['total_waste_cost'])), prefix='₱'
-                    )
-                    chart_insight(
-                        f"Waste cost by category — {breakdown}. "
-                        f"<b>{cat_w_sorted.iloc[0]['category']}</b> has the largest share and is the best "
-                        f"starting point for waste-reduction efforts."
-                    )
-
-        st.markdown("")
-
-        # Top wasted items — filterable by Year and Month
-        with st.container(border=True):
-            st.markdown("#### Top 10 Wasted Items")
-            if 'item_name' in overview_waste.columns:
-                tw1, tw2, tw3 = st.columns(3)
-                with tw1:
-                    top_yr = st.selectbox("Year", ['All'] + [str(y) for y in ow_years], key='ov_top_year')
-                with tw2:
-                    top_months = ['All','January','February','March','April','May','June',
-                                 'July','August','September','October','November','December']
-                    top_mon = st.selectbox("Month", top_months, key='ov_top_month')
-                with tw3:
-                    top_cats = ['All'] + sorted(overview_waste['category'].dropna().unique().tolist()) if 'category' in overview_waste.columns else ['All']
-                    top_cat = st.selectbox("Category", top_cats, key='ov_top_cat')
-                ow_top = overview_waste.copy()
-                if top_yr  != 'All': ow_top = ow_top[ow_top['date'].dt.year == int(top_yr)]
-                if top_mon != 'All': ow_top = ow_top[ow_top['date'].dt.month_name() == top_mon]
-                if top_cat != 'All': ow_top = ow_top[ow_top['category'] == top_cat]
-                ow_top, ow_item_disp, _ = add_normalized_keys(ow_top, item_col='item_name')
-                top_w = (
-                    ow_top.groupby('_item_key')['total_waste_cost']
-                    .sum().nlargest(10).reset_index()
-                )
-                top_w['item_name'] = top_w['_item_key'].map(ow_item_disp)
-                top_w = top_w[['item_name', 'total_waste_cost']]
-                top_w.columns = ['Item', 'Waste Cost']
-                if len(top_w) == 0:
-                    st.info("No records match the selected filters.")
+    # ============================================================================
+    # INVENTORY SNAPSHOT
+    # ============================================================================
+    with st.container(border=True):
+        st.markdown("#### Inventory Snapshot")
+        if len(overview_inv) > 0:
+            inv_ov = overview_inv.copy()
+            if 'alert_level' not in inv_ov.columns:
+                if 'spoilage_risk' in inv_ov.columns:
+                    inv_ov['alert_level'] = inv_ov['spoilage_risk'].replace({
+                        'High Risk': 'High Alert', 'Medium Risk': 'Medium Alert',
+                        'Low Risk': 'Low Alert', 'Expired': 'Expired',
+                    })
                 else:
-                    fig = px.bar(top_w, x='Waste Cost', y='Item', orientation='h',
-                                 color='Waste Cost', color_continuous_scale=['#C4A882', '#6F4E37'],
-                                 text_auto=',.0f')
-                    fig.update_traces(texttemplate='₱%{x:,.0f}', textposition='outside')
-                    fig.update_layout(
-                        yaxis={'categoryorder': 'total ascending'},
-                        plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                        coloraxis_showscale=False, xaxis_title='Waste Cost (₱)',
-                        margin=dict(l=0, r=80, t=10, b=0)
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                    top3 = top_w.sort_values('Waste Cost', ascending=False).head(3)
-                    top3_html = full_breakdown_html(
-                        list(zip(top3['Item'], top3['Waste Cost'])), prefix='₱', show_pct=False
-                    )
-                    chart_insight(
-                        f"Top 3 by waste cost — {top3_html}. Together, all {len(top_w)} items shown make up "
-                        f"<b>₱{top_w['Waste Cost'].sum():,.2f}</b> in total waste cost."
-                    )
+                    inv_ov['alert_level'] = 'Low Alert'
+            if 'quantity' in inv_ov.columns:
+                inv_ov.loc[inv_ov['quantity'] <= 0, 'alert_level'] = 'Out of Stock'
 
-        st.markdown("")
+            ALERT_COLORS_OV = {
+                'High Alert':   EARTH['danger'],
+                'Medium Alert': EARTH['warning'],
+                'Low Alert':    EARTH['success'],
+                'Expired':      '#4E342E',
+                'Out of Stock': '#8D6E63',
+            }
+            alert_order_ov = ['High Alert','Medium Alert','Low Alert','Expired','Out of Stock']
+            dist_inv = inv_ov['alert_level'].value_counts().reindex(alert_order_ov).fillna(0).reset_index()
+            dist_inv.columns = ['Alert Level', 'Count']
+            fig = px.bar(dist_inv, x='Alert Level', y='Count',
+                         color='Alert Level', color_discrete_map=ALERT_COLORS_OV,
+                         text_auto=True, category_orders={'Alert Level': alert_order_ov})
+            fig.update_layout(
+                plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+                showlegend=False, margin=dict(l=0, r=0, t=10, b=0)
+            )
+            st.plotly_chart(fig, use_container_width=True)
 
-        # Waste heatmap — day of week × week/month
-        with st.container(border=True):
-            st.markdown("#### Waste Heatmap")
-            day_order3 = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']
-            hcolo1, hcolo2, hcolo3, hcolo4 = st.columns(4)
-            with hcolo1:
-                heatmap_granularity_ov = st.selectbox(
-                    "View by", ['Weekly', 'Monthly', 'Yearly'], index=1, key='overview_heatmap_granularity'
-                )
-            with hcolo2:
-                if 'category' in overview_waste.columns:
-                    cats_ov = sorted(overview_waste['category'].dropna().unique().tolist())
-                    sel_cat_ov = st.selectbox("Category", ['All'] + cats_ov, key='overview_heatmap_category')
-                else:
-                    sel_cat_ov = 'All'
-            with hcolo3:
-                sel_month_ov = 'All months'
-                if heatmap_granularity_ov == 'Weekly':
-                    _ov_month_opts = ['All months','January','February','March','April','May','June',
-                                       'July','August','September','October','November','December']
-                    sel_month_ov = st.selectbox(
-                        "Month (Week 1-4)", _ov_month_opts, key='overview_heatmap_month'
-                    )
-            with hcolo4:
-                years_ov = sorted(overview_waste['date'].dt.year.dropna().unique(), reverse=True)
-                sel_year_ov = 'All'
-                if heatmap_granularity_ov != 'Yearly':
-                    sel_year_ov = st.selectbox("Year", ['All'] + [str(y) for y in years_ov], key='overview_heatmap_year')
+            urgent_ct = int(dist_inv.loc[dist_inv['Alert Level'].isin(['High Alert','Out of Stock']), 'Count'].sum())
+            chart_insight(
+                f"<b>{urgent_ct}</b> ingredient record(s) are High Alert or Out of Stock and need attention. "
+                f"See <b>Inventory Status</b> for the full restock guide.",
+                'warn' if urgent_ct > 0 else 'good'
+            )
+        else:
+            st.info("No inventory data yet. Go to the Database page to upload your inventory records.")
 
-            hw = overview_waste.copy()
-            if sel_cat_ov != 'All':
-                hw = hw[hw['category'] == sel_cat_ov]
-            if sel_year_ov != 'All':
-                hw = hw[hw['date'].dt.year == int(sel_year_ov)]
-            hw['day'] = hw['date'].dt.day_name()
-            if heatmap_granularity_ov == 'Weekly':
-                if sel_month_ov != 'All months':
-                    hw = hw[hw['date'].dt.month_name() == sel_month_ov]
-                    hw['period'] = 'Week ' + (((hw['date'].dt.day - 1) // 7) + 1).clip(upper=4).astype(str)
-                    x_label_ov = f'Week of {sel_month_ov}'
-                else:
-                    hw['period'] = 'Wk ' + hw['date'].dt.strftime('%V, %Y')
-                    x_label_ov = 'Week'
-            elif heatmap_granularity_ov == 'Yearly':
-                hw['period'] = hw['date'].dt.year.astype(str)
-                x_label_ov = 'Year'
-            else:
-                hw['period'] = hw['date'].dt.to_period('M').dt.strftime('%b %Y')
-                x_label_ov = 'Month'
+    st.markdown("")
 
-            if len(hw) == 0:
-                st.info("No waste records for that selection.")
-            else:
-                pivot_w = hw.groupby(['day','period'])['total_waste_cost'].sum().unstack(fill_value=0)
-                pivot_w = pivot_w.reindex([d for d in day_order3 if d in pivot_w.index])
-                pivot_w = pivot_w[sorted(pivot_w.columns, key=lambda c: hw[hw['period']==c]['date'].min())]
-                fig = px.imshow(pivot_w,
-                                color_continuous_scale=['#FAF6F1','#E8A33D','#B03A2E'],
-                                aspect='auto',
-                                labels=dict(x=x_label_ov, y='Day', color='Waste Cost (₱)'))
-                fig.update_layout(margin=dict(l=0, r=0, t=10, b=0), paper_bgcolor='rgba(0,0,0,0)')
-                if heatmap_granularity_ov == 'Weekly' and sel_month_ov == 'All months':
-                    fig.update_xaxes(tickangle=-45)
-                st.plotly_chart(fig, use_container_width=True)
+    # ============================================================================
+    # MENU SNAPSHOT
+    # ============================================================================
+    with st.container(border=True):
+        st.markdown("#### Menu Snapshot")
+        if len(overview_menu) > 0 and 'category' in overview_menu.columns:
+            menu_cat_dist = overview_menu['category'].value_counts().reset_index()
+            menu_cat_dist.columns = ['Category', 'Items']
+            fig = px.bar(menu_cat_dist, x='Category', y='Items',
+                         color_discrete_sequence=[EARTH['secondary']], text_auto=True)
+            fig.update_layout(
+                plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+                margin=dict(l=0, r=0, t=10, b=0)
+            )
+            st.plotly_chart(fig, use_container_width=True)
 
-                by_day_ov = pivot_w.sum(axis=1)
-                if len(by_day_ov) > 0:
-                    by_day_sorted = by_day_ov.sort_values(ascending=False)
-                    day_breakdown = full_breakdown_html(
-                        list(by_day_sorted.items()), prefix='₱', show_pct=False
-                    )
-                    chart_insight(
-                        f"Waste cost by day of week — {day_breakdown}. "
-                        f"<b>{by_day_sorted.index[0]}</b> shows the darkest cells overall — the highest "
-                        f"total waste cost in this view."
-                    )
-    else:
-        st.info("No waste data yet. Go to the Database page to upload your waste log.")
+            top_cat_menu = menu_cat_dist.sort_values('Items', ascending=False).iloc[0]
+            chart_insight(
+                f"<b>{len(overview_menu)}</b> menu items across <b>{len(menu_cat_dist)}</b> categories. "
+                f"<b>{top_cat_menu['Category']}</b> has the most items ({int(top_cat_menu['Items'])}). "
+                f"See <b>Menu Performance</b> for Keep/Improve/Reconsider recommendations."
+            )
+        else:
+            st.info("No menu data yet. Go to the Database page to upload your menu items.")
 
 # ============================================================================
 # PAGE 2: SALES ANALYTICS
@@ -1562,7 +1553,7 @@ elif page == 'Sales Analytics':
         st.markdown("#### Sales Trend")
         trend_src = _sa_apply_filters(sales_df, 'sa_trend')
         if 'date' in trend_src.columns and len(trend_src) > 0:
-            tcol1, tcol2 = st.columns(2)
+            tcol1, tcol2, tcol3 = st.columns(3)
             with tcol1:
                 metric_choice = st.selectbox(
                     "Metric to plot", ['Revenue', 'Transactions', 'Units Sold'],
@@ -1570,11 +1561,26 @@ elif page == 'Sales Analytics':
                 )
             with tcol2:
                 granularity = st.selectbox(
-                    "View by", ['Monthly', 'Yearly'], key='trend_granularity'
+                    "View by", ['Monthly', 'Yearly', 'Custom Range'], key='trend_granularity'
                 )
+            with tcol3:
+                if granularity == 'Custom Range':
+                    sa_trend_custom_range = st.date_input(
+                        "Date Range",
+                        value=(trend_src['date'].min().date(), trend_src['date'].max().date()),
+                        min_value=trend_src['date'].min().date(), max_value=trend_src['date'].max().date(),
+                        key='sa_trend_customrange'
+                    )
+                else:
+                    st.empty()
 
             fc2 = trend_src.copy()
-            if granularity == 'Monthly':
+            if granularity == 'Custom Range':
+                if isinstance(sa_trend_custom_range, tuple) and len(sa_trend_custom_range) == 2:
+                    fc2 = fc2[(fc2['date'].dt.date >= sa_trend_custom_range[0]) & (fc2['date'].dt.date <= sa_trend_custom_range[1])]
+                fc2['period'] = fc2['date'].dt.date
+                x_title = 'Date'
+            elif granularity == 'Monthly':
                 fc2['period'] = fc2['date'].dt.to_period('M').dt.to_timestamp()
                 x_title = 'Month'
             else:
@@ -1815,13 +1821,30 @@ elif page == 'Waste Analytics':
             st.markdown("#### Waste Cost Trend")
             trend_waste = _wa_apply_filters(display_waste, 'wa_trend', show_reason=False)
             if 'date' in trend_waste.columns and 'total_waste_cost' in trend_waste.columns and len(trend_waste) > 0:
-                trend_granularity = st.selectbox(
-                    "View by", ['Daily', 'Weekly', 'Monthly'], index=2, key='waste_trend_granularity'
-                )
+                wtc1, wtc2 = st.columns([1, 2])
+                with wtc1:
+                    trend_granularity = st.selectbox(
+                        "View by", ['Daily', 'Weekly', 'Monthly', 'Custom Range'], index=2, key='waste_trend_granularity'
+                    )
+                with wtc2:
+                    if trend_granularity == 'Custom Range':
+                        wa_trend_custom_range = st.date_input(
+                            "Date Range",
+                            value=(trend_waste['date'].min().date(), trend_waste['date'].max().date()),
+                            min_value=trend_waste['date'].min().date(), max_value=trend_waste['date'].max().date(),
+                            key='wa_trend_customrange'
+                        )
+                    else:
+                        st.empty()
 
                 twaste = trend_waste.copy()
 
-                if trend_granularity == 'Daily':
+                if trend_granularity == 'Custom Range':
+                    if isinstance(wa_trend_custom_range, tuple) and len(wa_trend_custom_range) == 2:
+                        twaste = twaste[(twaste['date'].dt.date >= wa_trend_custom_range[0]) & (twaste['date'].dt.date <= wa_trend_custom_range[1])]
+                    twaste['period'] = twaste['date'].dt.date
+                    ma_window = 7
+                elif trend_granularity == 'Daily':
                     twaste['period'] = twaste['date'].dt.date
                     ma_window = 7
                 elif trend_granularity == 'Weekly':
@@ -1918,7 +1941,7 @@ elif page == 'Waste Analytics':
                 hcolw1, hcolw2, hcolw3, hcolw4 = st.columns(4)
                 with hcolw1:
                     heatmap_granularity = st.selectbox(
-                        "View by", ['Weekly', 'Monthly', 'Yearly'], index=1, key='waste_heatmap_granularity'
+                        "View by", ['Weekly', 'Monthly', 'Yearly', 'Custom Range'], index=1, key='waste_heatmap_granularity'
                     )
                 with hcolw2:
                     if 'category' in display_waste.columns:
@@ -1928,16 +1951,24 @@ elif page == 'Waste Analytics':
                         sel_cat_hm = 'All'
                 with hcolw3:
                     sel_month_hm = 'All months'
+                    wa_heatmap_custom_range = None
                     if heatmap_granularity == 'Weekly':
                         _wa_month_opts = ['All months','January','February','March','April','May','June',
                                        'July','August','September','October','November','December']
                         sel_month_hm = st.selectbox(
                             "Month (Week 1-4)", _wa_month_opts, key='waste_heatmap_month'
                         )
+                    elif heatmap_granularity == 'Custom Range':
+                        wa_heatmap_custom_range = st.date_input(
+                            "Date Range",
+                            value=(display_waste['date'].min().date(), display_waste['date'].max().date()),
+                            min_value=display_waste['date'].min().date(), max_value=display_waste['date'].max().date(),
+                            key='waste_heatmap_customrange'
+                        )
                 with hcolw4:
                     years_hm = sorted(display_waste['date'].dt.year.dropna().unique(), reverse=True)
                     sel_year_hm = 'All'
-                    if heatmap_granularity != 'Yearly':
+                    if heatmap_granularity not in ('Yearly', 'Custom Range'):
                         sel_year_hm = st.selectbox("Year", ['All'] + [str(y) for y in years_hm], key='waste_heatmap_year')
 
                 hmw = display_waste.copy()
@@ -1947,7 +1978,12 @@ elif page == 'Waste Analytics':
                     hmw = hmw[hmw['date'].dt.year == int(sel_year_hm)]
 
                 hmw['day'] = hmw['date'].dt.day_name()
-                if heatmap_granularity == 'Weekly':
+                if heatmap_granularity == 'Custom Range':
+                    if isinstance(wa_heatmap_custom_range, tuple) and len(wa_heatmap_custom_range) == 2:
+                        hmw = hmw[(hmw['date'].dt.date >= wa_heatmap_custom_range[0]) & (hmw['date'].dt.date <= wa_heatmap_custom_range[1])]
+                    hmw['period'] = hmw['date'].dt.strftime('%b %d, %Y')
+                    x_label = 'Date'
+                elif heatmap_granularity == 'Weekly':
                     if sel_month_hm != 'All months':
                         hmw = hmw[hmw['date'].dt.month_name() == sel_month_hm]
                         hmw['period'] = 'Week ' + (((hmw['date'].dt.day - 1) // 7) + 1).clip(upper=4).astype(str)
@@ -1973,7 +2009,14 @@ elif page == 'Waste Analytics':
                                     aspect='auto',
                                     labels=dict(x=x_label, y='Day', color='Waste Cost (₱)'))
                     fig.update_layout(margin=dict(l=0,r=0,t=10,b=0), paper_bgcolor='rgba(0,0,0,0)')
+                    # Force one tick per column — with only a few Yearly/Custom
+                    # columns, Plotly's default tick spacing can otherwise
+                    # land between categories and label it with a fractional
+                    # index (e.g. "2022.5") instead of a real value.
+                    fig.update_xaxes(type='category', dtick=1)
                     if heatmap_granularity == 'Weekly' and sel_month_hm == 'All months':
+                        fig.update_xaxes(tickangle=-45)
+                    elif heatmap_granularity == 'Custom Range':
                         fig.update_xaxes(tickangle=-45)
                     st.plotly_chart(fig, use_container_width=True)
 
