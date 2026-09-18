@@ -420,17 +420,42 @@ ALL_MONTHS = ['January','February','March','April','May','June',
               'July','August','September','October','November','December']
 
 def render_year_quarter_month_filter(df, key_prefix, date_col='date'):
-    """Renders one Year / Quarter / Month filter row and returns the
+    """Renders one Year / Quarter / Month filter row (plus a 'Custom Date'
+    mode that swaps it for an exact date-range picker) and returns the
     filtered dataframe. The Month dropdown is CASCADED off the selected
     Quarter — picking Q1 narrows the Month options down to just January,
     February, March, instead of showing all 12 months (which let someone
     pick a month outside the quarter they just chose, silently overriding
     it). Used by every chart on the dashboard that filters by Year/Quarter/
-    Month, so the cascading behavior is consistent everywhere."""
+    Month, so the cascading behavior — and the Custom Date option — is
+    consistent everywhere."""
     df_f = df.copy()
     if date_col not in df_f.columns:
         return df_f
-    c1, c2, c3 = st.columns(3)
+    c0, c1, c2, c3 = st.columns([1, 1, 1, 1])
+    with c0:
+        filter_mode = st.selectbox(
+            "Time Filter", ['Year/Quarter/Month', 'Custom Date'], key=f'{key_prefix}_mode'
+        )
+    if filter_mode == 'Custom Date':
+        with c1:
+            if len(df_f) > 0:
+                min_d = df_f[date_col].min().date()
+                max_d = df_f[date_col].max().date()
+                date_range = st.date_input(
+                    "Date Range", value=(min_d, max_d), min_value=min_d, max_value=max_d,
+                    key=f'{key_prefix}_customrange'
+                )
+            else:
+                date_range = None
+        with c2:
+            st.empty()
+        with c3:
+            st.empty()
+        if date_range is not None and isinstance(date_range, tuple) and len(date_range) == 2:
+            df_f = df_f[(df_f[date_col].dt.date >= date_range[0]) & (df_f[date_col].dt.date <= date_range[1])]
+        return df_f
+
     yrs = sorted(df_f[date_col].dt.year.dropna().unique().tolist(), reverse=True)
     with c1:
         yr = st.selectbox("Year", ['All'] + [str(y) for y in yrs], key=f'{key_prefix}_year')
@@ -465,7 +490,7 @@ def render_daily_weekly_yearly_filter(df, key_prefix, date_col='date', show_gran
     if show_granularity:
         g1, g2 = st.columns([1, 2])
         with g1:
-            granularity = st.selectbox("View by", ['Daily', 'Weekly', 'Yearly'], index=1, key=f'{key_prefix}_gran')
+            granularity = st.selectbox("View by", ['Daily', 'Weekly', 'Yearly', 'Custom Date'], index=1, key=f'{key_prefix}_gran')
         with g2:
             date_range = st.date_input(
                 "Date Range", value=(min_d, max_d), min_value=min_d, max_value=max_d,
@@ -480,10 +505,15 @@ def render_daily_weekly_yearly_filter(df, key_prefix, date_col='date', show_gran
     if isinstance(date_range, tuple) and len(date_range) == 2:
         start_d, end_d = date_range
         df_f = df_f[(df_f[date_col].dt.date >= start_d) & (df_f[date_col].dt.date <= end_d)]
+    # 'Custom Date' buckets the same as 'Daily' — the date-range picker
+    # above already lets the user narrow to any exact range regardless of
+    # which option is chosen, so the two behave identically day-to-day.
+    if granularity == 'Custom Date':
+        granularity = 'Daily'
     return df_f, granularity
 
 def render_custom_range_picker(df, date_col, key_prefix, bucket='day'):
-    """Renders the date-range picker shown when 'Custom Range' is chosen in
+    """Renders the date-range picker shown when 'Custom Date' is chosen in
     a 'View by' dropdown. Filters df to the picked range and adds a
     'period' column bucketed by day/week/month. Returns (filtered_df,
     x_axis_label)."""
@@ -1043,22 +1073,45 @@ if page == 'Dashboard Overview':
     with st.container(border=True):
         st.markdown("#### Sales Snapshot")
         if len(overview_sales) > 0 and 'date' in overview_sales.columns and 'total' in overview_sales.columns:
+            sm_gran = st.selectbox(
+                "View By", ['Weekly', 'Monthly', 'Yearly', 'Custom Date'], index=1, key='ov_sales_gran'
+            )
             sm = overview_sales.copy()
-            sm['month'] = sm['date'].dt.to_period('M').dt.to_timestamp()
-            sm_rev = sm.groupby('month')['total'].sum().reset_index()
-            sm_rev.columns = ['Month', 'Revenue']
-            fig = px.area(sm_rev, x='Month', y='Revenue', color_discrete_sequence=[EARTH['primary']])
+            if sm_gran == 'Custom Date':
+                sm_custom_range = st.date_input(
+                    "Date Range",
+                    value=(overview_sales['date'].min().date(), overview_sales['date'].max().date()),
+                    min_value=overview_sales['date'].min().date(), max_value=overview_sales['date'].max().date(),
+                    key='ov_sales_customrange'
+                )
+                if isinstance(sm_custom_range, tuple) and len(sm_custom_range) == 2:
+                    sm = sm[(sm['date'].dt.date >= sm_custom_range[0]) & (sm['date'].dt.date <= sm_custom_range[1])]
+                sm['period'] = sm['date'].dt.date
+                x_lbl_sm = 'Date'
+            elif sm_gran == 'Weekly':
+                sm['period'] = sm['date'].dt.to_period('W').dt.start_time
+                x_lbl_sm = 'Week'
+            elif sm_gran == 'Yearly':
+                sm['period'] = sm['date'].dt.year
+                x_lbl_sm = 'Year'
+            else:
+                sm['period'] = sm['date'].dt.to_period('M').dt.to_timestamp()
+                x_lbl_sm = 'Month'
+            sm_rev = sm.groupby('period')['total'].sum().reset_index()
+            sm_rev.columns = [x_lbl_sm, 'Revenue']
+            fig = px.line(sm_rev, x=x_lbl_sm, y='Revenue', markers=True, color_discrete_sequence=[EARTH['primary']])
             fig.update_layout(
                 plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
                 yaxis=dict(tickprefix='₱', tickformat=',.0f'),
+                xaxis_title=x_lbl_sm,
                 margin=dict(l=0, r=0, t=10, b=0)
             )
             st.plotly_chart(fig, use_container_width=True)
             if len(sm_rev) >= 2:
                 sales_dir = "growing" if sm_rev['Revenue'].iloc[-1] > sm_rev['Revenue'].iloc[0] else "declining"
                 chart_insight(
-                    f"Monthly revenue is <b>{sales_dir}</b>. Latest month "
-                    f"({sm_rev.iloc[-1]['Month'].strftime('%B %Y')}) recorded "
+                    f"Revenue is <b>{sales_dir}</b>. Latest {x_lbl_sm.lower()} "
+                    f"({sm_rev.iloc[-1][x_lbl_sm]}) recorded "
                     f"<b>₱{sm_rev.iloc[-1]['Revenue']:,.2f}</b> in revenue. "
                     f"See <b>Sales Analytics</b> for the full breakdown.",
                     'good' if sales_dir == 'growing' else 'warn'
@@ -1079,9 +1132,9 @@ if page == 'Dashboard Overview':
             # Filters — View By controls what other filters appear
             tf1, tf2, tf3 = st.columns(3)
             with tf1:
-                ow_granularity = st.selectbox("View By", ['Weekly','Monthly','Yearly','Custom Range'], index=1, key='ov_trend_gran')
+                ow_granularity = st.selectbox("View By", ['Weekly','Monthly','Yearly','Custom Date'], index=1, key='ov_trend_gran')
             with tf2:
-                if ow_granularity == 'Custom Range':
+                if ow_granularity == 'Custom Date':
                     ow_custom_range = st.date_input(
                         "Date Range",
                         value=(overview_waste['date'].min().date(), overview_waste['date'].max().date()),
@@ -1105,10 +1158,10 @@ if page == 'Dashboard Overview':
 
             # Apply filters
             ow = overview_waste.copy()
-            if ow_granularity != 'Custom Range' and ow_sel_year != 'All':
+            if ow_granularity != 'Custom Date' and ow_sel_year != 'All':
                 ow = ow[ow['date'].dt.year == int(ow_sel_year)]
 
-            if ow_granularity == 'Custom Range':
+            if ow_granularity == 'Custom Date':
                 if isinstance(ow_custom_range, tuple) and len(ow_custom_range) == 2:
                     ow = ow[(ow['date'].dt.date >= ow_custom_range[0]) & (ow['date'].dt.date <= ow_custom_range[1])]
                 ow['period'] = ow['date'].dt.date
@@ -1156,13 +1209,13 @@ if page == 'Dashboard Overview':
                             _lbl = str(latest_p[x_lbl])
                         elif ow_granularity == 'Weekly' and ow_sel_month != 'All months':
                             _lbl = str(latest_p[x_lbl])  # e.g. "Week 4"
-                        elif ow_granularity == 'Custom Range':
+                        elif ow_granularity == 'Custom Date':
                             _lbl = pd.to_datetime(str(latest_p[x_lbl])).strftime('%b %d, %Y')
                         else:
                             _lbl = pd.to_datetime(str(latest_p[x_lbl])).strftime('%B %Y')
                     except Exception:
                         _lbl = str(latest_p[x_lbl])
-                    _period_word = 'day' if ow_granularity == 'Custom Range' else (
+                    _period_word = 'day' if ow_granularity == 'Custom Date' else (
                         ow_granularity.lower()[:-2] if ow_granularity.endswith('ly') else ow_granularity.lower()
                     )
                     chart_insight(
@@ -1292,9 +1345,27 @@ elif page == 'Sales Analytics':
     with st.container(border=True):
         st.markdown("#### Daily Revenue Trend")
         rev_trend_src = _sa_apply_filters(sales_df, 'sa_revtrend')
-        sa_gran = st.selectbox("Revenue View", ['Daily','Weekly','Monthly'], key='sa_gran')
+        rtcol1, rtcol2 = st.columns([1, 2])
+        with rtcol1:
+            sa_gran = st.selectbox("Revenue View", ['Daily','Weekly','Monthly','Custom Date'], key='sa_gran')
+        with rtcol2:
+            if sa_gran == 'Custom Date' and 'date' in rev_trend_src.columns and len(rev_trend_src) > 0:
+                sa_rev_custom_range = st.date_input(
+                    "Date Range",
+                    value=(rev_trend_src['date'].min().date(), rev_trend_src['date'].max().date()),
+                    min_value=rev_trend_src['date'].min().date(), max_value=rev_trend_src['date'].max().date(),
+                    key='sa_rev_customrange'
+                )
+            else:
+                st.empty()
         if 'date' in rev_trend_src.columns and 'total' in rev_trend_src.columns and len(rev_trend_src) > 0:
-            if sa_gran == 'Weekly':
+            if sa_gran == 'Custom Date':
+                daily_tmp = rev_trend_src.copy()
+                if isinstance(sa_rev_custom_range, tuple) and len(sa_rev_custom_range) == 2:
+                    daily_tmp = daily_tmp[(daily_tmp['date'].dt.date >= sa_rev_custom_range[0]) & (daily_tmp['date'].dt.date <= sa_rev_custom_range[1])]
+                daily = daily_tmp.groupby(daily_tmp['date'].dt.date)['total'].sum().reset_index()
+                daily.columns = ['date', 'revenue']
+            elif sa_gran == 'Weekly':
                 daily_tmp = rev_trend_src.copy()
                 daily_tmp['period'] = daily_tmp['date'].dt.to_period('W').dt.start_time
                 daily = daily_tmp.groupby('period')['total'].sum().reset_index()
@@ -1421,11 +1492,26 @@ elif page == 'Sales Analytics':
         st.markdown("#### Sales Heatmap (Hour × Day)")
         if 'date' in sales_df.columns and len(sales_df) > 0:
             hm_years = sorted(sales_df['date'].dt.year.dropna().unique(), reverse=True)
-            hm_sel_year = st.selectbox(
-                "Year", ['All'] + [str(y) for y in hm_years], key='sales_heatmap_year'
-            )
+            hmy1, hmy2 = st.columns([1, 2])
+            with hmy1:
+                hm_sel_year = st.selectbox(
+                    "Year", ['All'] + [str(y) for y in hm_years] + ['Custom Date'], key='sales_heatmap_year'
+                )
+            with hmy2:
+                if hm_sel_year == 'Custom Date':
+                    hm_custom_range = st.date_input(
+                        "Date Range",
+                        value=(sales_df['date'].min().date(), sales_df['date'].max().date()),
+                        min_value=sales_df['date'].min().date(), max_value=sales_df['date'].max().date(),
+                        key='sales_heatmap_customrange'
+                    )
+                else:
+                    st.empty()
             hm = sales_df.copy()
-            if hm_sel_year != 'All':
+            if hm_sel_year == 'Custom Date':
+                if isinstance(hm_custom_range, tuple) and len(hm_custom_range) == 2:
+                    hm = hm[(hm['date'].dt.date >= hm_custom_range[0]) & (hm['date'].dt.date <= hm_custom_range[1])]
+            elif hm_sel_year != 'All':
                 hm = hm[hm['date'].dt.year == int(hm_sel_year)]
             hm['hour'] = hm['date'].dt.hour
             hm['day']  = hm['date'].dt.day_name()
@@ -1561,10 +1647,10 @@ elif page == 'Sales Analytics':
                 )
             with tcol2:
                 granularity = st.selectbox(
-                    "View by", ['Monthly', 'Yearly', 'Custom Range'], key='trend_granularity'
+                    "View by", ['Monthly', 'Yearly', 'Custom Date'], key='trend_granularity'
                 )
             with tcol3:
-                if granularity == 'Custom Range':
+                if granularity == 'Custom Date':
                     sa_trend_custom_range = st.date_input(
                         "Date Range",
                         value=(trend_src['date'].min().date(), trend_src['date'].max().date()),
@@ -1575,7 +1661,7 @@ elif page == 'Sales Analytics':
                     st.empty()
 
             fc2 = trend_src.copy()
-            if granularity == 'Custom Range':
+            if granularity == 'Custom Date':
                 if isinstance(sa_trend_custom_range, tuple) and len(sa_trend_custom_range) == 2:
                     fc2 = fc2[(fc2['date'].dt.date >= sa_trend_custom_range[0]) & (fc2['date'].dt.date <= sa_trend_custom_range[1])]
                 fc2['period'] = fc2['date'].dt.date
@@ -1669,12 +1755,21 @@ elif page == 'Waste Analytics':
 
     if display_waste is not None and len(display_waste) > 0:
 
-        def _wa_apply_filters(base_df, key_prefix, show_reason=True):
-            """Renders its own Category / Waste Reason / Time Period filter
-            row and returns the filtered dataframe — kept local to each
-            chart so no two visualizations on this page share filters."""
+        def _wa_apply_filters(base_df, key_prefix, show_reason=True, show_viewby=True):
+            """Renders its own Category / Waste Reason / View by
+            (Weekly / Monthly / Yearly / Custom Date) filter row and
+            returns the filtered dataframe — kept local to each chart so
+            no two visualizations on this page share filters. Weekly /
+            Monthly / Yearly are quick presets relative to the most
+            recent date in the data (last 7 / 30 / 365 days); Custom Date
+            reveals an exact date-range picker instead. Pass
+            show_viewby=False for a chart that already has its own
+            dedicated period-bucketing control (e.g. a trend chart with a
+            Weekly/Monthly/Yearly grouping selector) — otherwise this
+            preset would pre-restrict the data before that chart's own
+            control ever sees it."""
             df_f = base_df.copy()
-            n_cols = 3 if show_reason else 2
+            n_cols = 1 + int(show_reason) + int(show_viewby) * 2
             cols = st.columns(n_cols)
             with cols[0]:
                 if 'category' in df_f.columns:
@@ -1690,8 +1785,21 @@ elif page == 'Waste Analytics':
                         reasons = sorted(df_f['waste_reason'].dropna().unique().tolist())
                         sel_reason = st.selectbox("Waste Reason", ['All'] + reasons, key=f'{key_prefix}_reason')
                 idx += 1
+            if sel_cat != 'All':
+                df_f = df_f[df_f['category'] == sel_cat]
+            if sel_reason != 'All':
+                df_f = df_f[df_f['waste_reason'] == sel_reason]
+            if not show_viewby:
+                return df_f
             with cols[idx]:
-                if 'date' in df_f.columns and len(df_f) > 0:
+                view_by = st.selectbox(
+                    "View by", ['Weekly', 'Monthly', 'Yearly', 'Custom Date'],
+                    index=1, key=f'{key_prefix}_viewby'
+                )
+            idx += 1
+            date_range = None
+            with cols[idx]:
+                if view_by == 'Custom Date' and 'date' in df_f.columns and len(df_f) > 0:
                     _min_d = df_f['date'].min().date()
                     _max_d = df_f['date'].max().date()
                     date_range = st.date_input(
@@ -1699,15 +1807,16 @@ elif page == 'Waste Analytics':
                         min_value=_min_d, max_value=_max_d, key=f'{key_prefix}_daterange'
                     )
                 else:
-                    date_range = None
+                    st.empty()
 
-            if sel_cat != 'All':
-                df_f = df_f[df_f['category'] == sel_cat]
-            if sel_reason != 'All':
-                df_f = df_f[df_f['waste_reason'] == sel_reason]
-            if date_range is not None and isinstance(date_range, tuple) and len(date_range) == 2 and 'date' in df_f.columns:
-                start_d, end_d = date_range
-                df_f = df_f[(df_f['date'].dt.date >= start_d) & (df_f['date'].dt.date <= end_d)]
+            if 'date' in df_f.columns and len(df_f) > 0:
+                if view_by == 'Custom Date':
+                    if date_range is not None and isinstance(date_range, tuple) and len(date_range) == 2:
+                        df_f = df_f[(df_f['date'].dt.date >= date_range[0]) & (df_f['date'].dt.date <= date_range[1])]
+                else:
+                    days_back = {'Weekly': 7, 'Monthly': 30, 'Yearly': 365}[view_by]
+                    max_d = df_f['date'].max()
+                    df_f = df_f[df_f['date'] >= max_d - pd.Timedelta(days=days_back)]
             return df_f
 
         # ── Waste Summary (KPIs) — its own filter ───────────────────────────
@@ -1819,15 +1928,15 @@ elif page == 'Waste Analytics':
         # Waste trend — its own filter (granularity + category + time period)
         with st.container(border=True):
             st.markdown("#### Waste Cost Trend")
-            trend_waste = _wa_apply_filters(display_waste, 'wa_trend', show_reason=False)
+            trend_waste = _wa_apply_filters(display_waste, 'wa_trend', show_reason=False, show_viewby=False)
             if 'date' in trend_waste.columns and 'total_waste_cost' in trend_waste.columns and len(trend_waste) > 0:
                 wtc1, wtc2 = st.columns([1, 2])
                 with wtc1:
                     trend_granularity = st.selectbox(
-                        "View by", ['Daily', 'Weekly', 'Monthly', 'Custom Range'], index=2, key='waste_trend_granularity'
+                        "View by", ['Weekly', 'Monthly', 'Yearly', 'Custom Date'], index=1, key='waste_trend_granularity'
                     )
                 with wtc2:
-                    if trend_granularity == 'Custom Range':
+                    if trend_granularity == 'Custom Date':
                         wa_trend_custom_range = st.date_input(
                             "Date Range",
                             value=(trend_waste['date'].min().date(), trend_waste['date'].max().date()),
@@ -1839,17 +1948,17 @@ elif page == 'Waste Analytics':
 
                 twaste = trend_waste.copy()
 
-                if trend_granularity == 'Custom Range':
+                if trend_granularity == 'Custom Date':
                     if isinstance(wa_trend_custom_range, tuple) and len(wa_trend_custom_range) == 2:
                         twaste = twaste[(twaste['date'].dt.date >= wa_trend_custom_range[0]) & (twaste['date'].dt.date <= wa_trend_custom_range[1])]
-                    twaste['period'] = twaste['date'].dt.date
-                    ma_window = 7
-                elif trend_granularity == 'Daily':
                     twaste['period'] = twaste['date'].dt.date
                     ma_window = 7
                 elif trend_granularity == 'Weekly':
                     twaste['period'] = twaste['date'].dt.to_period('W').dt.start_time
                     ma_window = 4
+                elif trend_granularity == 'Yearly':
+                    twaste['period'] = twaste['date'].dt.year
+                    ma_window = 2
                 else:
                     twaste['period'] = twaste['date'].dt.to_period('M').dt.to_timestamp()
                     ma_window = 3
@@ -1941,7 +2050,7 @@ elif page == 'Waste Analytics':
                 hcolw1, hcolw2, hcolw3, hcolw4 = st.columns(4)
                 with hcolw1:
                     heatmap_granularity = st.selectbox(
-                        "View by", ['Weekly', 'Monthly', 'Yearly', 'Custom Range'], index=1, key='waste_heatmap_granularity'
+                        "View by", ['Weekly', 'Monthly', 'Yearly', 'Custom Date'], index=1, key='waste_heatmap_granularity'
                     )
                 with hcolw2:
                     if 'category' in display_waste.columns:
@@ -1958,7 +2067,7 @@ elif page == 'Waste Analytics':
                         sel_month_hm = st.selectbox(
                             "Month (Week 1-4)", _wa_month_opts, key='waste_heatmap_month'
                         )
-                    elif heatmap_granularity == 'Custom Range':
+                    elif heatmap_granularity == 'Custom Date':
                         wa_heatmap_custom_range = st.date_input(
                             "Date Range",
                             value=(display_waste['date'].min().date(), display_waste['date'].max().date()),
@@ -1968,7 +2077,7 @@ elif page == 'Waste Analytics':
                 with hcolw4:
                     years_hm = sorted(display_waste['date'].dt.year.dropna().unique(), reverse=True)
                     sel_year_hm = 'All'
-                    if heatmap_granularity not in ('Yearly', 'Custom Range'):
+                    if heatmap_granularity not in ('Yearly', 'Custom Date'):
                         sel_year_hm = st.selectbox("Year", ['All'] + [str(y) for y in years_hm], key='waste_heatmap_year')
 
                 hmw = display_waste.copy()
@@ -1978,7 +2087,7 @@ elif page == 'Waste Analytics':
                     hmw = hmw[hmw['date'].dt.year == int(sel_year_hm)]
 
                 hmw['day'] = hmw['date'].dt.day_name()
-                if heatmap_granularity == 'Custom Range':
+                if heatmap_granularity == 'Custom Date':
                     if isinstance(wa_heatmap_custom_range, tuple) and len(wa_heatmap_custom_range) == 2:
                         hmw = hmw[(hmw['date'].dt.date >= wa_heatmap_custom_range[0]) & (hmw['date'].dt.date <= wa_heatmap_custom_range[1])]
                     hmw['period'] = hmw['date'].dt.strftime('%b %d, %Y')
@@ -2016,7 +2125,7 @@ elif page == 'Waste Analytics':
                     fig.update_xaxes(type='category', dtick=1)
                     if heatmap_granularity == 'Weekly' and sel_month_hm == 'All months':
                         fig.update_xaxes(tickangle=-45)
-                    elif heatmap_granularity == 'Custom Range':
+                    elif heatmap_granularity == 'Custom Date':
                         fig.update_xaxes(tickangle=-45)
                     st.plotly_chart(fig, use_container_width=True)
 
@@ -2433,17 +2542,47 @@ elif page == 'Inventory Status':
         if 'purchase_date' in inv_hist.columns:
             inv_hist['purchase_date'] = pd.to_datetime(inv_hist['purchase_date'], errors='coerce')
 
-        # ── "Current" snapshot — most recent 30 days of purchases ─────────
-        # (inventory now holds 3 years of history for trend purposes; KPIs /
-        # alert levels below should reflect what's actually on hand today)
-        if 'purchase_date' in inv_hist.columns:
-            cutoff = inv_hist['purchase_date'].max() - pd.Timedelta(days=30)
-            inv = inv_hist[inv_hist['purchase_date'] >= cutoff].copy()
+        # ── "Current" snapshot window — user-selectable, defaults to the
+        # most recent 30 days of purchases (inventory holds 3 years of
+        # history for trend purposes; the snapshot below should reflect
+        # what's actually on hand as of the chosen window) ────────────────
+        if 'purchase_date' in inv_hist.columns and len(inv_hist) > 0:
+            snap1, snap2 = st.columns([1, 2])
+            with snap1:
+                snap_view_by = st.selectbox(
+                    "Snapshot window", ['Weekly', 'Monthly', 'Yearly', 'Custom Date'],
+                    index=1, key='inv_snapshot_viewby'
+                )
+            with snap2:
+                if snap_view_by == 'Custom Date':
+                    snap_custom_range = st.date_input(
+                        "Date Range",
+                        value=(inv_hist['purchase_date'].min().date(), inv_hist['purchase_date'].max().date()),
+                        min_value=inv_hist['purchase_date'].min().date(), max_value=inv_hist['purchase_date'].max().date(),
+                        key='inv_snapshot_customrange'
+                    )
+                else:
+                    st.empty()
+            if snap_view_by == 'Custom Date':
+                if isinstance(snap_custom_range, tuple) and len(snap_custom_range) == 2:
+                    inv = inv_hist[
+                        (inv_hist['purchase_date'].dt.date >= snap_custom_range[0]) &
+                        (inv_hist['purchase_date'].dt.date <= snap_custom_range[1])
+                    ].copy()
+                else:
+                    inv = inv_hist.copy()
+                snap_caption = f"Snapshot for {snap_custom_range[0]} to {snap_custom_range[1]}." if isinstance(snap_custom_range, tuple) and len(snap_custom_range) == 2 else "Custom snapshot."
+            else:
+                days_back = {'Weekly': 7, 'Monthly': 30, 'Yearly': 365}[snap_view_by]
+                cutoff = inv_hist['purchase_date'].max() - pd.Timedelta(days=days_back)
+                inv = inv_hist[inv_hist['purchase_date'] >= cutoff].copy()
+                snap_caption = f"Snapshot of the most recent {snap_view_by.lower()} window (last {days_back} days) of purchases."
         else:
             inv = inv_hist.copy()
+            snap_caption = "Snapshot of all purchases."
 
         # ── Summary badges ────────────────────────────────────────────────
-        st.caption("Snapshot of the most recent 30 days of purchases. Full 3-year history is available in the 'Inventory Value Over Time' chart below.")
+        st.caption(f"{snap_caption} Full 3-year history is available in the 'Inventory Value Over Time' chart below.")
         alert_order = ['High Alert','Medium Alert','Low Alert','Expired','Out of Stock']
         alert_counts = inv['alert_level'].value_counts()
 
