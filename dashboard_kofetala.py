@@ -410,9 +410,34 @@ def normalize_text_columns(df, cols):
         df[col] = key.map(canonical)
     return df
 
-# ── Known placeholder/template text that sometimes ends up as a real row —
-# e.g. someone uploads a CSV where the template's example item name
-# ("Product Name (regular)") was left un-edited. Stripped out ONCE, right
+def render_data_quality_check(df, dupe_subset=None, critical_cols=None):
+    """Shows a quick data-quality summary right under an upload preview:
+    how many duplicate rows and how many missing/null values the uploaded
+    file contains, so a bad file gets caught before it's saved — instead
+    of silently loading blanks or doubled-up rows into the database.
+    dupe_subset narrows what counts as a 'duplicate' row (defaults to
+    every column); critical_cols narrows which columns are checked for
+    missing values (defaults to every column)."""
+    if df is None or len(df) == 0:
+        return
+    n_dupes = int(df.duplicated(subset=dupe_subset, keep=False).sum())
+    check_cols = [c for c in (critical_cols or list(df.columns)) if c in df.columns]
+    per_col_missing = df[check_cols].isna().sum() if check_cols else pd.Series(dtype=int)
+    n_missing = int(per_col_missing.sum())
+
+    if n_dupes == 0 and n_missing == 0:
+        st.success(f"✅ Data check passed — found {n_dupes} duplicate rows, {n_missing} missing values.")
+    else:
+        lines = [f"**{n_dupes}** duplicate row(s) and **{n_missing}** missing/null value(s) found in this file."]
+        if n_missing > 0:
+            missing_cols = per_col_missing[per_col_missing > 0]
+            col_list = ", ".join(f"{col} ({int(cnt)})" for col, cnt in missing_cols.items())
+            lines.append(f"Missing values by column: {col_list}.")
+        if n_dupes > 0:
+            lines.append("Duplicate rows will be filtered out automatically when added, but missing values won't be — please fix them in your file first.")
+        st.warning("⚠️ " + " ".join(lines))
+
+
 # after loading each dataframe, so it never appears anywhere on the
 # dashboard (every chart, KPI, and table) instead of having to be
 # special-cased on each page separately.
@@ -3629,14 +3654,10 @@ elif page == 'Forecast & Predictions':
                         if sel_item_fc != 'All':
                             fc_df = fc_df[fc_df[item_col_fc] == sel_item_fc]
             with fcol4:
-                horizon_map = {
-                    '1 Year ahead': 1, '2 Years ahead': 2, '3 Years ahead': 3,
-                    '5 Years ahead': 5, '10 Years ahead': 10,
-                }
-                sel_horizon = st.selectbox(
-                    "Forecast Horizon", list(horizon_map.keys()), index=2, key=f'{key_prefix}_horizon'
+                forecast_view = st.selectbox(
+                    "Forecast View", ['Monthly', 'Yearly'], key=f'{key_prefix}_view'
                 )
-                horizon_years = horizon_map[sel_horizon]
+                horizon_years = 1 if forecast_view == 'Monthly' else 5
 
             fc_df['month_period'] = fc_df['date'].dt.to_period('M').dt.to_timestamp()
 
@@ -3712,44 +3733,63 @@ elif page == 'Forecast & Predictions':
                 target_vals = future_vals * (1 + ramp) if is_growth else future_vals * (1 - ramp)
                 target_df = pd.DataFrame({'month_period': future_periods, y_col: target_vals})
 
+            # ── Roll historical/forecast/target up to the selected Forecast
+            # View. The trend itself is always fit at monthly resolution
+            # (so the target ramp stays smooth), but Yearly view sums those
+            # monthly figures into one point per year for a cleaner,
+            # long-range chart and table instead of dozens of month ticks. ──
+            if forecast_view == 'Yearly':
+                def _to_yearly(df_m):
+                    d = df_m.copy()
+                    d['period'] = d['month_period'].dt.to_period('Y').dt.to_timestamp()
+                    return d.groupby('period')[y_col].sum().reset_index().rename(columns={'period': 'month_period'})
+                monthly_disp  = _to_yearly(monthly)
+                forecast_disp = _to_yearly(forecast_df)
+                target_disp   = _to_yearly(target_df) if show_target else None
+                x_title, x_tickformat, x_dtick, x_hoverformat = 'Year', '%Y', 'M12', '%Y'
+            else:
+                monthly_disp, forecast_disp = monthly, forecast_df
+                target_disp = target_df if show_target else None
+                x_title, x_tickformat, x_dtick, x_hoverformat = 'Month', '%b %Y', 'M1', '%b %Y'
+
             # ── Chart: actual (solid) + baseline forecast (dashed) [+ target] ──
             fig = go.Figure()
             fig.add_trace(go.Scatter(
-                x=monthly['month_period'], y=monthly[y_col],
+                x=monthly_disp['month_period'], y=monthly_disp[y_col],
                 mode='lines+markers', name='Historical',
                 line=dict(color=EARTH['primary'], width=2.5)
             ))
             fig.add_trace(go.Scatter(
-                x=pd.concat([monthly['month_period'].tail(1), forecast_df['month_period']]),
-                y=pd.concat([monthly[y_col].tail(1), forecast_df[y_col]]),
+                x=pd.concat([monthly_disp['month_period'].tail(1), forecast_disp['month_period']]),
+                y=pd.concat([monthly_disp[y_col].tail(1), forecast_disp[y_col]]),
                 mode='lines+markers', name='Forecast — no action (baseline)',
                 line=dict(color=EARTH['accent'], width=2.5, dash='dash')
             ))
             if show_target:
                 fig.add_trace(go.Scatter(
-                    x=pd.concat([monthly['month_period'].tail(1), target_df['month_period']]),
-                    y=pd.concat([monthly[y_col].tail(1), target_df[y_col]]),
+                    x=pd.concat([monthly_disp['month_period'].tail(1), target_disp['month_period']]),
+                    y=pd.concat([monthly_disp[y_col].tail(1), target_disp[y_col]]),
                     mode='lines+markers',
                     name=f"Target — with action ({'+' if is_growth else '-'}{change_pct}%)",
                     line=dict(color=EARTH['success'], width=2.5, dash='dot')
                 ))
             fig.update_layout(
                 plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                xaxis_title='Month', yaxis_title=y_label,
+                xaxis_title=x_title, yaxis_title=y_label,
                 yaxis=dict(tickprefix=prefix, tickformat=',.0f'),
                 xaxis=dict(
-                    tickformat='%b %Y',      # e.g. "Dec 2026" — stays readable when zoomed in
-                    dtick='M1',               # force a tick for every month
-                    hoverformat='%b %Y',
-                    rangeslider=dict(visible=True, thickness=0.08),
-                    rangeselector=dict(
+                    tickformat=x_tickformat,
+                    dtick=x_dtick,
+                    hoverformat=x_hoverformat,
+                    rangeslider=dict(visible=(forecast_view == 'Monthly'), thickness=0.08),
+                    **({'rangeselector': dict(
                         buttons=[
                             dict(count=6,  label='6m',  step='month', stepmode='backward'),
                             dict(count=1,  label='1y',  step='year',  stepmode='backward'),
                             dict(count=2,  label='2y',  step='year',  stepmode='backward'),
                             dict(step='all', label='All'),
                         ]
-                    )
+                    )} if forecast_view == 'Monthly' else {})
                 ),
                 legend=dict(orientation='h', y=1.1),
                 margin=dict(l=0, r=0, t=40, b=0)
@@ -3761,69 +3801,38 @@ elif page == 'Forecast & Predictions':
                 k1, k2, k3, k4 = st.columns(4)
             else:
                 k1, k2, k3 = st.columns(3)
+            latest_label = last_period.strftime('%Y') if forecast_view == 'Yearly' else last_period.strftime('%b %Y')
+            end_label    = forecast_end.strftime('%Y') if forecast_view == 'Yearly' else forecast_end.strftime('%b %Y')
             with k1:
-                stat_card(f"Latest actual ({last_period.strftime('%b %Y')})",
-                          f"{prefix}{monthly[y_col].iloc[-1]:,.0f}")
+                stat_card(f"Latest actual ({latest_label})",
+                          f"{prefix}{monthly_disp[y_col].iloc[-1]:,.0f}")
             with k2:
-                stat_card(f"Baseline {forecast_end.strftime('%b %Y')}",
-                          f"{prefix}{forecast_df[y_col].iloc[-1]:,.0f}")
+                stat_card(f"Baseline {end_label}",
+                          f"{prefix}{forecast_disp[y_col].iloc[-1]:,.0f}")
             with k3:
                 trend_word = "growing" if slope > 0 else ("declining" if slope < 0 else "flat")
                 trend_dir_ui = "up" if slope > 0 else ("down" if slope < 0 else "flat")
                 stat_card("Monthly trend", f"{prefix}{slope:,.0f} / mo", trend_word, trend_dir_ui)
             if show_target:
                 with k4:
-                    diff_amt = target_df[y_col].iloc[-1] - forecast_df[y_col].iloc[-1]
-                    stat_card(f"Target {forecast_end.strftime('%b %Y')}",
-                              f"{prefix}{target_df[y_col].iloc[-1]:,.0f}",
+                    diff_amt = target_disp[y_col].iloc[-1] - forecast_disp[y_col].iloc[-1]
+                    stat_card(f"Target {end_label}",
+                              f"{prefix}{target_disp[y_col].iloc[-1]:,.0f}",
                               f"{prefix}{abs(diff_amt):,.0f} {'gained' if is_growth else 'saved'}", "up")
 
-            target_line = (
-                (
-                    f"If the system's recommendations are followed (better prep quantities, storage, "
-                    f"and FIFO practices), {metric_choice.lower()} could instead be reduced to roughly "
-                    f"<b>{prefix}{target_df[y_col].iloc[-1]:,.0f}</b> by {forecast_end.strftime('%B %Y')} — "
-                    f"a savings of about <b>{prefix}{abs(diff_amt):,.0f}</b>."
-                ) if (show_target and not is_growth) else (
-                    f"If the system's recommendations are followed (better stocking, promos, and "
-                    f"demand-matched prep), {metric_choice.lower()} could instead grow to roughly "
-                    f"<b>{prefix}{target_df[y_col].iloc[-1]:,.0f}</b> by {forecast_end.strftime('%B %Y')} — "
-                    f"about <b>{prefix}{abs(diff_amt):,.0f}</b> more than the baseline trend."
-                ) if show_target else ""
-            )
-
-            baseline_note = (
-                "<b>This dashed \"baseline\" line is what happens if nothing changes</b> — it's the "
-                "problem this system exists to solve, not a prediction that waste has to increase."
-                if source_type == 'waste' else
-                "<b>This dashed \"baseline\" line is a simple continuation of the current trend</b> — "
-                "useful for planning staffing, inventory, and production levels ahead of time."
-            )
-            st.markdown(f"""
-            <div style='background:#FFF8F3;border-left:4px solid #6F4E37;
-                        padding:16px 20px;border-radius:8px;margin-top:8px'>
-                <b>Forecast:</b> Based on the historical trend from
-                <b>{monthly['month_period'].min().strftime('%b %Y')}</b> to
-                <b>{last_period.strftime('%b %Y')}</b>, {metric_choice.lower()} is
-                <b>{trend_word.split()[0]}</b> by roughly <b>{prefix}{abs(slope):,.0f} per month</b>.
-                {baseline_note}
-                {target_line}
-                This is a simple linear projection — actual results will vary with seasonality
-                and operational changes.
-            </div>
-            """, unsafe_allow_html=True)
-
             # ── Combined table ──────────────────────────────────────
-            st.markdown("###### Historical + Forecasted Values")
+            st.markdown(f"###### Historical + Forecasted Values ({forecast_view})")
             combined_table = pd.concat([
-                monthly[['month_period', y_col]].assign(Type='Historical'),
-                forecast_df[['month_period', y_col]].assign(Type='Forecast (baseline)')
-            ]).rename(columns={'month_period': 'Month', y_col: metric_choice})
+                monthly_disp[['month_period', y_col]].assign(Type='Historical'),
+                forecast_disp[['month_period', y_col]].assign(Type='Forecast (baseline)')
+            ]).rename(columns={'month_period': x_title, y_col: metric_choice})
             if show_target:
-                target_rows = target_df[['month_period', y_col]].assign(Type='Target (with action)') \
-                    .rename(columns={'month_period': 'Month', y_col: metric_choice})
+                target_rows = target_disp[['month_period', y_col]].assign(Type='Target (with action)') \
+                    .rename(columns={'month_period': x_title, y_col: metric_choice})
                 combined_table = pd.concat([combined_table, target_rows])
-            combined_table['Month'] = pd.to_datetime(combined_table['Month']).dt.strftime('%b %Y')
+            combined_table[x_title] = pd.to_datetime(combined_table[x_title]).dt.strftime(
+                '%Y' if forecast_view == 'Yearly' else '%b %Y'
+            )
             combined_table = combined_table.reset_index(drop=True)
 
             def _style_fc_type(val):
@@ -3910,6 +3919,10 @@ elif page == 'Database':
                     new_sales['date'] = pd.to_datetime(new_sales['date'], errors='coerce')
                     st.markdown(f"#### Preview — {len(new_sales)} new records")
                     st.dataframe(new_sales, use_container_width=True)
+                    render_data_quality_check(
+                        new_sales, dupe_subset=['date','item','quantity','total'],
+                        critical_cols=['date','item','category','quantity','price','total']
+                    )
 
                     if st.button("Add to Existing Data", type="primary", key='db_sales_add_btn'):
                         existing_sales = _load_sales_up()
@@ -3979,6 +3992,10 @@ elif page == 'Database':
                     new_waste['date'] = pd.to_datetime(new_waste['date'], errors='coerce')
                     st.markdown(f"#### Preview — {len(new_waste)} new records")
                     st.dataframe(new_waste, use_container_width=True)
+                    render_data_quality_check(
+                        new_waste, dupe_subset=['date','item_name','quantity_wasted','waste_reason'],
+                        critical_cols=['date','item_name','category','quantity_wasted','waste_reason','total_waste_cost']
+                    )
 
                     if st.button("Add to Existing Data", type="primary", key='db_waste_add_btn'):
                         existing_waste_up = _load_waste_up()
@@ -4042,6 +4059,10 @@ elif page == 'Database':
                     new_menu = pd.read_csv(uploaded_menu)
                     st.markdown(f"#### Preview — {len(new_menu)} items")
                     st.dataframe(new_menu, use_container_width=True)
+                    render_data_quality_check(
+                        new_menu, dupe_subset=['item_name'],
+                        critical_cols=['item_name','category','price','cost']
+                    )
 
                     if st.button("Add / Update Menu Items", type="primary", key='db_menu_add_btn'):
                         existing_menu = _load_menu_up()
@@ -4095,6 +4116,10 @@ elif page == 'Database':
                     new_inv = pd.read_csv(uploaded_inv)
                     st.markdown(f"#### Preview — {len(new_inv)} new records")
                     st.dataframe(new_inv, use_container_width=True)
+                    render_data_quality_check(
+                        new_inv, dupe_subset=['purchase_date','ingredient','quantity'],
+                        critical_cols=['purchase_date','ingredient','quantity','unit','cost_per_unit','expiration_date']
+                    )
 
                     if st.button("Add to Existing Inventory", type="primary", key='db_inv_add_btn'):
                         existing_raw = pd.read_csv(INVENTORY_FILE_UP) if os.path.exists(INVENTORY_FILE_UP) else pd.DataFrame()
