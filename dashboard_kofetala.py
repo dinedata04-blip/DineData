@@ -1014,99 +1014,109 @@ if page == 'Dashboard Overview':
 
     st.markdown("")
 
-    # ── Four summary panels — Sales, Waste, Inventory, Menu ──────────────
+    # ── Four summary panels — Sales, Waste, Inventory, Menu — each its
+    # own full-width row so all the stats are visible at once, not
+    # crammed two-to-a-row. ─────────────────────────────────────────────
     st.markdown("### Summary by Area")
-    row1c1, row1c2 = st.columns(2)
 
-    with row1c1:
-        with st.container(border=True):
-            st.markdown("#### Sales Summary")
-            if len(overview_sales) > 0:
-                s1, s2, s3 = st.columns(3)
-                with s1:
-                    stat_card("Transactions", f"{len(overview_sales):,}")
-                with s2:
-                    if 'date' in overview_sales.columns:
-                        days_span = max((overview_sales['date'].max() - overview_sales['date'].min()).days, 1)
-                        stat_card("Avg Daily Revenue", f"₱{total_revenue / days_span:,.2f}")
-                    else:
-                        stat_card("Avg Daily Revenue", "N/A")
-                with s3:
-                    if 'category' in overview_sales.columns and 'total' in overview_sales.columns:
-                        top_sales_cat = overview_sales.groupby('category')['total'].sum().idxmax()
-                        stat_card("Top Category", top_sales_cat)
-                    else:
-                        stat_card("Top Category", "N/A")
-                st.caption("See **Sales Analytics** for revenue trends, categories, and top-selling days.")
-            else:
-                st.info("No sales data yet. Go to the Database page to upload your sales log.")
-
-    with row1c2:
-        with st.container(border=True):
-            st.markdown("#### Waste Summary")
-            if len(overview_waste) > 0:
-                w1, w2, w3 = st.columns(3)
-                with w1:
-                    total_units_wasted = overview_waste['quantity_wasted'].sum() if 'quantity_wasted' in overview_waste.columns else 0
-                    stat_card("Units Wasted", f"{int(total_units_wasted):,}")
-                with w2:
-                    stat_card("Waste Records", f"{len(overview_waste):,}")
-                with w3:
-                    if 'category' in overview_waste.columns and 'total_waste_cost' in overview_waste.columns:
-                        top_waste_cat = overview_waste.groupby('category')['total_waste_cost'].sum().idxmax()
-                        stat_card("Top Waste Category", top_waste_cat)
-                    else:
-                        stat_card("Top Waste Category", "N/A")
-                st.caption("See **Waste Analytics** for trends, reasons, and the day-of-week heatmap.")
-            else:
-                st.info("No waste data yet. Go to the Database page to upload your waste log.")
+    with st.container(border=True):
+        st.markdown("#### Sales Summary")
+        if len(overview_sales) > 0:
+            s1, s2, s3 = st.columns(3)
+            with s1:
+                stat_card("Transactions", f"{len(overview_sales):,}")
+            with s2:
+                if 'date' in overview_sales.columns:
+                    days_span = max((overview_sales['date'].max() - overview_sales['date'].min()).days, 1)
+                    stat_card("Avg Daily Revenue", f"₱{total_revenue / days_span:,.2f}")
+                else:
+                    stat_card("Avg Daily Revenue", "N/A")
+            with s3:
+                if 'category' in overview_sales.columns and 'total' in overview_sales.columns:
+                    top_sales_cat = overview_sales.groupby('category')['total'].sum().idxmax()
+                    stat_card("Top Category", top_sales_cat)
+                else:
+                    stat_card("Top Category", "N/A")
+            st.caption("See **Sales Analytics** for revenue trends, categories, and top-selling days.")
+        else:
+            st.info("No sales data yet. Go to the Database page to upload your sales log.")
 
     st.markdown("")
-    row2c1, row2c2 = st.columns(2)
 
-    with row2c1:
-        with st.container(border=True):
-            st.markdown("#### Inventory Summary")
-            if len(overview_inventory) > 0:
-                i1, i2, i3 = st.columns(3)
-                with i1:
-                    stat_card("Needs Attention", f"{int(n_attention):,}")
-                with i2:
-                    if 'quantity' in overview_inventory.columns:
-                        n_oos = (overview_inventory['quantity'] <= 0).sum()
-                        stat_card("Out of Stock", f"{int(n_oos):,}")
-                    else:
-                        stat_card("Out of Stock", "N/A")
-                with i3:
-                    if 'total_cost' in overview_inventory.columns:
-                        stat_card("Inventory Value", f"₱{overview_inventory['total_cost'].sum():,.2f}")
-                    else:
-                        stat_card("Inventory Value", "N/A")
-                st.caption("See **Inventory Status** for alert levels, restock guidance, and expiry tracking.")
-            else:
-                st.info("No inventory data yet. Go to the Database page to upload your inventory records.")
+    with st.container(border=True):
+        st.markdown("#### Waste Summary")
+        if len(overview_waste) > 0:
+            w1, w2, w3 = st.columns(3)
+            with w1:
+                total_units_wasted = overview_waste['quantity_wasted'].sum() if 'quantity_wasted' in overview_waste.columns else 0
+                stat_card("Units Wasted", f"{int(total_units_wasted):,}")
+            with w2:
+                stat_card("Waste Records", f"{len(overview_waste):,}")
+            with w3:
+                if 'category' in overview_waste.columns and 'total_waste_cost' in overview_waste.columns:
+                    top_waste_cat = overview_waste.groupby('category')['total_waste_cost'].sum().idxmax()
+                    stat_card("Top Waste Category", top_waste_cat)
+                else:
+                    stat_card("Top Waste Category", "N/A")
+            st.caption("See **Waste Analytics** for trends, reasons, and the day-of-week heatmap.")
+        else:
+            st.info("No waste data yet. Go to the Database page to upload your waste log.")
 
-    with row2c2:
-        with st.container(border=True):
-            st.markdown("#### Menu Summary")
-            if len(overview_menu) > 0:
-                m1, m2, m3 = st.columns(3)
-                with m1:
-                    stat_card("Menu Items", f"{len(overview_menu):,}")
-                with m2:
-                    if 'profit_margin' in overview_menu.columns:
-                        stat_card("Avg Profit Margin", f"{overview_menu['profit_margin'].mean():.1%}")
+    st.markdown("")
+
+    with st.container(border=True):
+        st.markdown("#### Inventory Summary")
+        if len(overview_inventory) > 0:
+            i1, i2, i3 = st.columns(3)
+            with i1:
+                stat_card("Needs Attention", f"{int(n_attention):,}")
+            with i2:
+                if 'quantity' in overview_inventory.columns:
+                    n_oos = (overview_inventory['quantity'] <= 0).sum()
+                    stat_card("Out of Stock", f"{int(n_oos):,}")
+                else:
+                    stat_card("Out of Stock", "N/A")
+            with i3:
+                if 'total_cost' in overview_inventory.columns:
+                    stat_card("Inventory Value", f"₱{overview_inventory['total_cost'].sum():,.2f}")
+                else:
+                    stat_card("Inventory Value", "N/A")
+            st.caption("See **Inventory Status** for alert levels, restock guidance, and expiry tracking.")
+        else:
+            st.info("No inventory data yet. Go to the Database page to upload your inventory records.")
+
+    st.markdown("")
+
+    with st.container(border=True):
+        st.markdown("#### Menu Summary")
+        if len(overview_menu) > 0:
+            m1, m2, m3 = st.columns(3)
+            with m1:
+                stat_card("Menu Items", f"{len(overview_menu):,}")
+            with m2:
+                # NOTE: DIM_ITEM.profit_margin is stored as a peso amount
+                # (price - cost), not a ratio — formatting it directly as
+                # a percentage produces nonsense (e.g. "7113.3%").
+                # Compute the true margin ratio fresh, the same way the
+                # Menu Performance page does.
+                if {'price', 'cost'}.issubset(overview_menu.columns):
+                    _valid_menu = overview_menu[overview_menu['price'] > 0]
+                    if len(_valid_menu) > 0:
+                        avg_margin_pct = ((_valid_menu['price'] - _valid_menu['cost']) / _valid_menu['price']).mean()
+                        stat_card("Avg Profit Margin", f"{avg_margin_pct:.1%}")
                     else:
                         stat_card("Avg Profit Margin", "N/A")
-                with m3:
-                    if 'category' in overview_menu.columns:
-                        top_menu_cat = overview_menu['category'].value_counts().idxmax()
-                        stat_card("Top Category", top_menu_cat)
-                    else:
-                        stat_card("Top Category", "N/A")
-                st.caption("See **Menu Performance** for Keep / Improve / Reconsider classifications.")
-            else:
-                st.info("No menu data yet. Go to the Database page to upload your menu items.")
+                else:
+                    stat_card("Avg Profit Margin", "N/A")
+            with m3:
+                if 'category' in overview_menu.columns:
+                    top_menu_cat = overview_menu['category'].value_counts().idxmax()
+                    stat_card("Top Category", top_menu_cat)
+                else:
+                    stat_card("Top Category", "N/A")
+            st.caption("See **Menu Performance** for Keep / Improve / Reconsider classifications.")
+        else:
+            st.info("No menu data yet. Go to the Database page to upload your menu items.")
 
 
 # ============================================================================
