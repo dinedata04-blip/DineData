@@ -855,11 +855,16 @@ def insert_inventory_records_to_db(new_inv_df):
             ).fetchone()
             if dupe:
                 continue
+            _exp_val = row.get('expiration_date')
+            try:
+                _exp_str = pd.to_datetime(_exp_val).strftime('%Y-%m-%d') if pd.notna(_exp_val) else None
+            except Exception:
+                _exp_str = str(_exp_val).split(' ')[0] if _exp_val is not None else None
             conn.execute(
                 "INSERT INTO FACT_INVENTORY (date_key, ingredient_key, alert_key, quantity, cost_per_unit, "
                 "total_cost, expiration_date, shelf_life_days, days_until_expiration) VALUES (?,?,?,?,?,?,?,?,?)",
                 (dk, ing_k, alert_k, row.get('quantity'), row.get('cost_per_unit'), row.get('total_cost'),
-                 str(row.get('expiration_date')), row.get('shelf_life_days'), row.get('days_until_expiration'))
+                 _exp_str, row.get('shelf_life_days'), row.get('days_until_expiration'))
             )
             inserted += 1
         except Exception:
@@ -2192,6 +2197,25 @@ elif page == 'Menu Performance':
 
     if item_col and len(summary) > 0:
 
+        # ── Flag suspiciously uniform profit margins ─────────────────────
+        # If almost every item's margin rounds to the same 1-decimal value
+        # (e.g. everything shows ~70%), the underlying per-item COST data is
+        # almost certainly missing and was filled with a flat cost estimate
+        # (price × a fixed %) rather than real, item-specific costs — not a
+        # bug in this page's math. Flag it so it isn't mistaken for one.
+        if 'profit_margin' in summary.columns and summary['profit_margin'].notna().sum() >= 5:
+            _rounded_margins = summary['profit_margin'].dropna().round(2)
+            _mode_share = _rounded_margins.value_counts(normalize=True).iloc[0]
+            if _mode_share >= 0.85:
+                _mode_val = _rounded_margins.value_counts().idxmax()
+                st.warning(
+                    f"⚠️ **{_mode_share*100:.0f}% of items show almost the exact same profit margin "
+                    f"(~{_mode_val*100:.0f}%).** This usually means real per-item COST wasn't available "
+                    "when the sales data was prepared, so a flat cost estimate was used instead — not an "
+                    "error in this page. To get accurate margins per item, update the actual `cost` for "
+                    "each item on the **Database → Menu** upload tab."
+                )
+
         # ── Sort controls (for the tables below) ────────────────────────
         sort_options = [c for c in ['quantity','total','profit_margin'] if c in summary.columns]
         scol1, scol2 = st.columns(2)
@@ -2534,22 +2558,104 @@ elif page == 'Inventory Status':
         st.markdown("")
         st.markdown("---")
 
-        # ── Alert level filter ────────────────────────────────────────────
+        # ── Alert level filter — now actually applied below (previously the
+        # filtered result was computed but never used by any table) ───────
         filter_level = st.selectbox(
             "Filter by Alert Level",
-            ['All'] + alert_order
+            ['All'] + alert_order,
+            key='inv_filter_level'
         )
         inv_filtered = inv if filter_level == 'All' else inv[inv['alert_level'] == filter_level]
 
-        # ── Urgent items first ────────────────────────────────────────────
-        urgent = inv[inv['alert_level'].isin(['High Alert','Expired','Out of Stock'])]
-        if len(urgent) > 0:
-            with st.container(border=True):
-                st.markdown("#### Urgent Items")
-                st.dataframe(urgent.sort_values('days_until_expiration')
-                             if 'days_until_expiration' in urgent.columns else urgent,
-                             use_container_width=True)
-            st.markdown("")
+        # ── Inventory Records table — the main filterable, row-level view ──
+        with st.container(border=True):
+            st.markdown("#### Inventory Records")
+            st.caption(
+                "Purchase Date and Expiry Date are shown side by side. Expired items are marked "
+                "**Discard** in the Action column; Out of Stock items are marked **Restock**."
+            )
+            if len(inv_filtered) == 0:
+                st.info("No inventory records match this filter.")
+            else:
+                inv_table = inv_filtered.copy()
+
+                # Discard/Restock action column, derived from Alert Level
+                def _inv_action(level):
+                    if level == 'Expired':
+                        return 'Discard'
+                    if level == 'Out of Stock':
+                        return 'Restock'
+                    return '—'
+                inv_table['Action'] = inv_table['alert_level'].apply(_inv_action)
+
+                # Clean date columns — strip the 00:00:00 time component that
+                # a plain Timestamp/string otherwise renders in a dataframe.
+                if 'purchase_date' in inv_table.columns:
+                    inv_table['Purchase Date'] = pd.to_datetime(inv_table['purchase_date'], errors='coerce').dt.strftime('%Y-%m-%d')
+                if 'expiration_date' in inv_table.columns:
+                    inv_table['Expiry Date'] = pd.to_datetime(
+                        inv_table['expiration_date'].astype(str).str.split(' ').str[0], errors='coerce'
+                    ).dt.strftime('%Y-%m-%d')
+
+                rename_map = {
+                    'ingredient': 'Ingredient', 'quantity': 'Quantity', 'unit': 'Unit',
+                    'cost_per_unit': 'Cost per Unit', 'total_cost': 'Total Cost',
+                    'alert_level': 'Alert Level',
+                }
+                inv_table = inv_table.rename(columns=rename_map)
+
+                # Sort most urgent first by default: High Alert / Expired /
+                # Out of Stock rows surface at the top even when the filter
+                # is left on 'All', with soonest-to-expire first within a level.
+                _urgency_rank = {'High Alert': 0, 'Expired': 1, 'Out of Stock': 2, 'Medium Alert': 3, 'Low Alert': 4}
+                inv_table['_urgency'] = inv_table['Alert Level'].map(_urgency_rank).fillna(9)
+                sort_cols = ['_urgency'] + (['expiration_date'] if 'expiration_date' in inv_table.columns else [])
+                inv_table = inv_table.sort_values(sort_cols).drop(columns=['_urgency'])
+
+                # Column order: Purchase Date + Expiry Date side by side;
+                # inventory_key, shelf_life_days, days_until_expiration are
+                # dropped entirely (internal/derived fields, not useful here).
+                display_cols = [c for c in [
+                    'Ingredient', 'Purchase Date', 'Expiry Date', 'Quantity', 'Unit',
+                    'Cost per Unit', 'Total Cost', 'Alert Level', 'Action'
+                ] if c in inv_table.columns]
+                inv_table = inv_table[display_cols]
+
+                # Color-code the Alert Level column the same way the Menu
+                # Performance page colors its Keep/Improve/Reconsider column.
+                def _style_alert_col(val):
+                    m = {
+                        'High Alert':   'background-color:#FBEAEA;color:#C62828;font-weight:600',
+                        'Medium Alert': 'background-color:#FDF1DE;color:#B85C00;font-weight:600',
+                        'Low Alert':    'background-color:#E7F3E8;color:#2E7D32;font-weight:600',
+                        'Expired':      'background-color:#E8DCD8;color:#4E342E;font-weight:600',
+                        'Out of Stock': 'background-color:#EFE6E0;color:#6D4C41;font-weight:600',
+                    }
+                    return m.get(val, '')
+
+                def _style_action_col(val):
+                    if val == 'Discard':
+                        return 'background-color:#FBEAEA;color:#C62828;font-weight:600'
+                    if val == 'Restock':
+                        return 'background-color:#FDF1DE;color:#B85C00;font-weight:600'
+                    return ''
+
+                fmt_map_inv = {}
+                if 'Cost per Unit' in inv_table.columns: fmt_map_inv['Cost per Unit'] = '₱{:,.2f}'
+                if 'Total Cost' in inv_table.columns:    fmt_map_inv['Total Cost']    = '₱{:,.2f}'
+                if 'Quantity' in inv_table.columns:      fmt_map_inv['Quantity']      = '{:,.1f}'
+
+                styled_inv = inv_table.style
+                if 'Alert Level' in inv_table.columns:
+                    styled_inv = style_map(styled_inv, _style_alert_col, subset=['Alert Level'])
+                if 'Action' in inv_table.columns:
+                    styled_inv = style_map(styled_inv, _style_action_col, subset=['Action'])
+                if fmt_map_inv:
+                    styled_inv = styled_inv.format(fmt_map_inv)
+
+                st.dataframe(styled_inv, use_container_width=True, hide_index=True)
+
+        st.markdown("")
 
         # ── Inventory Guide — what to restock this week/day ────────────────
         with st.container(border=True):
@@ -2564,11 +2670,11 @@ elif page == 'Inventory Status':
                     .copy()
                 )
 
-                restock_now  = latest_per_ing[latest_per_ing['alert_level'] == 'Out of Stock']
+                restock_now  = latest_per_ing[latest_per_ing['alert_level'].isin(['Out of Stock', 'Expired'])]
                 restock_soon = latest_per_ing[latest_per_ing['alert_level'].isin(['High Alert', 'Medium Alert'])]
                 well_stocked = latest_per_ing[latest_per_ing['alert_level'] == 'Low Alert']
 
-                def _guide_col(df_g, color, empty_msg):
+                def _guide_col(df_g, color, empty_msg, show_reason=False):
                     if len(df_g) == 0:
                         st.caption(empty_msg)
                         return
@@ -2578,10 +2684,13 @@ elif page == 'Inventory Status':
                         if 'quantity' in df_g.columns and pd.notna(r['quantity']):
                             unit_txt = str(r['unit']) if 'unit' in df_g.columns and pd.notna(r.get('unit')) else ''
                             qty_txt = f" — {r['quantity']:.0f} {unit_txt} left".rstrip()
+                        reason_txt = ""
+                        if show_reason and 'alert_level' in df_g.columns and pd.notna(r.get('alert_level')):
+                            reason_txt = f" <span style='color:#8A7460;font-size:11.5px'>({r['alert_level']})</span>"
                         st.markdown(
                             f"<div style='padding:7px 12px;border-left:3px solid {color};"
                             f"margin-bottom:4px;font-size:13.5px;color:#3E2723'>"
-                            f"{r['ingredient']}{qty_txt}</div>",
+                            f"{r['ingredient']}{qty_txt}{reason_txt}</div>",
                             unsafe_allow_html=True
                         )
 
@@ -2593,7 +2702,7 @@ elif page == 'Inventory Status':
                         "font-size:13px;margin-bottom:10px'>RESTOCK NOW</div>",
                         unsafe_allow_html=True
                     )
-                    _guide_col(restock_now, '#C62828', "Nothing out of stock right now.")
+                    _guide_col(restock_now, '#C62828', "Nothing out of stock or expired right now.", show_reason=True)
                 with g2:
                     st.markdown(
                         "<div style='background:#B85C00;color:white;padding:8px 14px;"
@@ -2781,8 +2890,26 @@ elif page == 'Inventory Status':
 
         st.markdown("")
 
-        # ── Download inventory report ─────────────────────────────────────
-        csv_inv = inv.to_csv(index=False).encode('utf-8')
+        # ── Download inventory report — same cleaned columns as the table ──
+        inv_export = inv.copy()
+        inv_export['Action'] = inv_export['alert_level'].apply(
+            lambda lvl: 'Discard' if lvl == 'Expired' else ('Restock' if lvl == 'Out of Stock' else '—')
+        )
+        if 'purchase_date' in inv_export.columns:
+            inv_export['Purchase Date'] = pd.to_datetime(inv_export['purchase_date'], errors='coerce').dt.strftime('%Y-%m-%d')
+        if 'expiration_date' in inv_export.columns:
+            inv_export['Expiry Date'] = pd.to_datetime(
+                inv_export['expiration_date'].astype(str).str.split(' ').str[0], errors='coerce'
+            ).dt.strftime('%Y-%m-%d')
+        inv_export = inv_export.rename(columns={
+            'ingredient': 'Ingredient', 'quantity': 'Quantity', 'unit': 'Unit',
+            'cost_per_unit': 'Cost per Unit', 'total_cost': 'Total Cost', 'alert_level': 'Alert Level',
+        })
+        export_cols = [c for c in [
+            'Ingredient', 'Purchase Date', 'Expiry Date', 'Quantity', 'Unit',
+            'Cost per Unit', 'Total Cost', 'Alert Level', 'Action'
+        ] if c in inv_export.columns]
+        csv_inv = inv_export[export_cols].to_csv(index=False).encode('utf-8')
         st.download_button(
             label="Download Inventory Report",
             data=csv_inv,
@@ -3254,11 +3381,11 @@ elif page == 'Forecast & Predictions':
                     .copy()
                 )
 
-                restock_now_fc  = latest_per_ing_fc[latest_per_ing_fc['alert_level'] == 'Out of Stock']
+                restock_now_fc  = latest_per_ing_fc[latest_per_ing_fc['alert_level'].isin(['Out of Stock', 'Expired'])]
                 restock_soon_fc = latest_per_ing_fc[latest_per_ing_fc['alert_level'].isin(['High Alert', 'Medium Alert'])]
                 well_stocked_fc = latest_per_ing_fc[latest_per_ing_fc['alert_level'] == 'Low Alert']
 
-                def _guide_col_fc(df_g, color, empty_msg):
+                def _guide_col_fc(df_g, color, empty_msg, show_reason=False):
                     if len(df_g) == 0:
                         st.caption(empty_msg)
                         return
@@ -3268,10 +3395,13 @@ elif page == 'Forecast & Predictions':
                         if 'quantity' in df_g.columns and pd.notna(r['quantity']):
                             unit_txt = str(r['unit']) if 'unit' in df_g.columns and pd.notna(r.get('unit')) else ''
                             qty_txt = f" — {r['quantity']:.0f} {unit_txt} left".rstrip()
+                        reason_txt = ""
+                        if show_reason and 'alert_level' in df_g.columns and pd.notna(r.get('alert_level')):
+                            reason_txt = f" <span style='color:#8A7460;font-size:11.5px'>({r['alert_level']})</span>"
                         st.markdown(
                             f"<div style='padding:7px 12px;border-left:3px solid {color};"
                             f"margin-bottom:4px;font-size:13.5px;color:#3E2723'>"
-                            f"{r['ingredient']}{qty_txt}</div>",
+                            f"{r['ingredient']}{qty_txt}{reason_txt}</div>",
                             unsafe_allow_html=True
                         )
 
@@ -3283,7 +3413,7 @@ elif page == 'Forecast & Predictions':
                         "font-size:13px;margin-bottom:10px'>RESTOCK NOW</div>",
                         unsafe_allow_html=True
                     )
-                    _guide_col_fc(restock_now_fc, '#C62828', "Nothing out of stock right now.")
+                    _guide_col_fc(restock_now_fc, '#C62828', "Nothing out of stock or expired right now.", show_reason=True)
                 with rg2:
                     st.markdown(
                         "<div style='background:#B85C00;color:white;padding:8px 14px;"
@@ -4440,14 +4570,16 @@ elif page == 'Database':
                 iw_sql = ("WHERE " + " AND ".join(iw)) if iw else ""
 
                 iq = (
-                    "SELECT d.date AS [Purchase Date], "
+                    "SELECT substr(d.date,1,10) AS [Purchase Date], "
+                    "substr(inv.expiration_date,1,10) AS [Expiry Date], "
                     "ing.ingredient_name AS [Ingredient], ing.unit AS [Unit], "
                     "inv.quantity AS [Quantity], "
                     "inv.cost_per_unit AS [Cost per Unit], "
                     "inv.total_cost AS [Total Cost], "
-                    "inv.expiration_date AS [Expiry Date], "
-                    "inv.days_until_expiration AS [Days Until Expiry], "
-                    "al.alert_name AS [Alert Level] "
+                    "al.alert_name AS [Alert Level], "
+                    "CASE WHEN al.alert_name = 'Expired' THEN 'Discard' "
+                    "     WHEN al.alert_name = 'Out of Stock' THEN 'Restock' "
+                    "     ELSE '—' END AS [Action] "
                     "FROM FACT_INVENTORY inv "
                     "JOIN DIM_DATE d ON inv.date_key=d.date_key "
                     "JOIN DIM_INGREDIENT ing ON inv.ingredient_key=ing.ingredient_key "
@@ -4463,7 +4595,7 @@ elif page == 'Database':
                     edited_i = st.data_editor(
                         df_i, use_container_width=True, hide_index=True,
                         key='i_editor', num_rows="dynamic",
-                        disabled=["Purchase Date","Ingredient","Unit","Expiry Date","Alert Level"]
+                        disabled=["Purchase Date","Expiry Date","Ingredient","Unit","Alert Level","Action"]
                     )
 
                     ic1, ic2, ic3 = st.columns([1, 1, 2])
@@ -4471,6 +4603,14 @@ elif page == 'Database':
                         if st.button("Save Changes", type="primary", key='i_save'):
                             try:
                                 for _, row in edited_i.iterrows():
+                                    # Days-until-expiration is no longer shown as an
+                                    # editable column, so recompute it from Expiry
+                                    # Date (still clean, e.g. '2026-06-08') instead
+                                    # of trusting a value the user can't see/edit.
+                                    try:
+                                        _days_left = (pd.to_datetime(row.get('Expiry Date')) - pd.Timestamp.now().normalize()).days
+                                    except Exception:
+                                        _days_left = None
                                     conn.execute(
                                         "UPDATE FACT_INVENTORY SET "
                                         "quantity=?, cost_per_unit=?, total_cost=?, days_until_expiration=? "
@@ -4480,7 +4620,7 @@ elif page == 'Database':
                                         "JOIN DIM_INGREDIENT ing ON inv.ingredient_key=ing.ingredient_key "
                                         "WHERE d.date=? AND ing.ingredient_name=?)",
                                         (row.get('Quantity'), row.get('Cost per Unit'),
-                                         row.get('Total Cost'), row.get('Days Until Expiry'),
+                                         row.get('Total Cost'), _days_left,
                                          row.get('Purchase Date'), row.get('Ingredient'))
                                     )
                                 conn.commit()
