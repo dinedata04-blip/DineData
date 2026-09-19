@@ -1694,12 +1694,15 @@ elif page == 'Sales Analytics':
                     trend_word = "grown" if trend_delta > 0 else "declined"
                     peak_row = trend_tbl.loc[trend_tbl[y_col].idxmax()]
                     low_row  = trend_tbl.loc[trend_tbl[y_col].idxmin()]
+                    _period_fmt = {'Day': '%b %d, %Y', 'Week': '%b %d, %Y', 'Month': '%b %Y', 'Year': '%Y'}.get(x_title, '%b %d, %Y')
+                    _peak_lbl = pd.to_datetime(peak_row['period']).strftime(_period_fmt)
+                    _low_lbl  = pd.to_datetime(low_row['period']).strftime(_period_fmt)
                     chart_insight(
                         f"{metric_choice} has <b>{trend_word}</b> from "
                         f"{y_prefix}{trend_tbl[y_col].iloc[0]:,.0f} to <b>{y_prefix}{trend_tbl[y_col].iloc[-1]:,.0f}</b> "
                         f"across this range ({len(trend_tbl)} {x_title.lower()}(s) shown). "
-                        f"The highest point was <b>{y_prefix}{peak_row[y_col]:,.0f}</b> ({peak_row['period']}) and the "
-                        f"lowest was <b>{y_prefix}{low_row[y_col]:,.0f}</b> ({low_row['period']}); average across the "
+                        f"The highest point was <b>{y_prefix}{peak_row[y_col]:,.0f}</b> ({_peak_lbl}) and the "
+                        f"lowest was <b>{y_prefix}{low_row[y_col]:,.0f}</b> ({_low_lbl}); average across the "
                         f"range was <b>{y_prefix}{trend_tbl[y_col].mean():,.0f}</b>."
                     )
             else:
@@ -2199,12 +2202,28 @@ elif page == 'Menu Performance':
             margin_50 = s['profit_margin'].quantile(0.50)
 
             def _classify_menu(row):
-                if row['quantity'] >= qty_75 and row['profit_margin'] >= margin_50:
+                # Classic menu-engineering matrix (popularity × profitability),
+                # mapped onto 3 buckets instead of 4:
+                #   High qty + High margin  → Keep       (a "Star")
+                #   High qty + Low margin   → Improve    (a "Plowhorse" — sells
+                #                              well but needs a cost/price fix)
+                #   Low qty  + High margin  → Improve    (a "Puzzle" — already
+                #                              profitable, just needs more
+                #                              promotion, not removal)
+                #   Low qty  + Low margin   → Reconsider (a "Dog")
+                # A high-margin item used to get flagged as Reconsider purely
+                # for having low volume, even though its margin means it's
+                # worth promoting rather than dropping — this makes margin
+                # matter for low-volume items too, not just quantity.
+                high_qty    = row['quantity'] >= qty_75
+                low_qty     = row['quantity'] < qty_25
+                high_margin = row['profit_margin'] >= margin_50
+                if high_qty and high_margin:
                     return 'Keep'
-                elif row['quantity'] >= qty_25:
-                    return 'Improve'
-                else:
+                elif low_qty and not high_margin:
                     return 'Reconsider'
+                else:
+                    return 'Improve'
 
             s['menu_performance'] = s.apply(_classify_menu, axis=1)
         return s
