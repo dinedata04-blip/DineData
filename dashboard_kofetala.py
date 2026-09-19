@@ -29,6 +29,7 @@ import os
 import io
 import warnings
 import sqlite3
+import re
 from datetime import datetime, date
 warnings.filterwarnings('ignore')
 
@@ -415,22 +416,37 @@ def normalize_text_columns(df, cols):
 # after loading each dataframe, so it never appears anywhere on the
 # dashboard (every chart, KPI, and table) instead of having to be
 # special-cased on each page separately.
-_PLACEHOLDER_ITEM_NAMES = {
+#
+# Matching is done on a "squashed" version of the text — lowercased with
+# every non-letter/non-digit character (spaces, parentheses, dashes,
+# underscores, double spaces, trailing spaces, etc.) removed — so
+# "Product Name (regular)", "Product Name(Regular)", "product_name -
+# regular", and "PRODUCT NAME  REGULAR " all collapse to the same key and
+# get caught, instead of only an exact-punctuation match.
+_PLACEHOLDER_ITEM_NAMES_RAW = {
     'product name (regular)', 'product name', 'item name (regular)',
     'item name', 'item_name', 'sample item', 'example item', 'item',
+    'product name (iced)', 'product name (hot)',
 }
+
+def _squash_text(s):
+    """Lowercase and strip out everything except letters and digits, so
+    spacing/punctuation/case differences don't defeat a placeholder match."""
+    return re.sub(r'[^a-z0-9]', '', str(s).lower())
+
+_PLACEHOLDER_ITEM_KEYS = {_squash_text(name) for name in _PLACEHOLDER_ITEM_NAMES_RAW}
 
 def strip_placeholder_rows(df, col_candidates=('item', 'item_name')):
     """Drops rows whose item/item_name value matches a known placeholder
-    string (case-insensitive, whitespace-trimmed). Safe no-op if df is
-    None/empty or none of the candidate columns exist."""
+    string, ignoring case, spacing, and punctuation differences. Safe
+    no-op if df is None/empty or none of the candidate columns exist."""
     if df is None or len(df) == 0:
         return df
     df = df.copy()
     for col in col_candidates:
         if col in df.columns:
-            key = df[col].astype(str).str.strip().str.lower()
-            df = df[~key.isin(_PLACEHOLDER_ITEM_NAMES)]
+            key = df[col].astype(str).map(_squash_text)
+            df = df[~key.isin(_PLACEHOLDER_ITEM_KEYS)]
     return df
 
 # ── Quarter → Month mapping, shared by every Year/Quarter/Month filter row ──
