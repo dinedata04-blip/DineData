@@ -1073,45 +1073,22 @@ if page == 'Dashboard Overview':
     with st.container(border=True):
         st.markdown("#### Sales Snapshot")
         if len(overview_sales) > 0 and 'date' in overview_sales.columns and 'total' in overview_sales.columns:
-            sm_gran = st.selectbox(
-                "View By", ['Weekly', 'Monthly', 'Yearly', 'Custom Date'], index=1, key='ov_sales_gran'
-            )
             sm = overview_sales.copy()
-            if sm_gran == 'Custom Date':
-                sm_custom_range = st.date_input(
-                    "Date Range",
-                    value=(overview_sales['date'].min().date(), overview_sales['date'].max().date()),
-                    min_value=overview_sales['date'].min().date(), max_value=overview_sales['date'].max().date(),
-                    key='ov_sales_customrange'
-                )
-                if isinstance(sm_custom_range, tuple) and len(sm_custom_range) == 2:
-                    sm = sm[(sm['date'].dt.date >= sm_custom_range[0]) & (sm['date'].dt.date <= sm_custom_range[1])]
-                sm['period'] = sm['date'].dt.date
-                x_lbl_sm = 'Date'
-            elif sm_gran == 'Weekly':
-                sm['period'] = sm['date'].dt.to_period('W').dt.start_time
-                x_lbl_sm = 'Week'
-            elif sm_gran == 'Yearly':
-                sm['period'] = sm['date'].dt.year
-                x_lbl_sm = 'Year'
-            else:
-                sm['period'] = sm['date'].dt.to_period('M').dt.to_timestamp()
-                x_lbl_sm = 'Month'
-            sm_rev = sm.groupby('period')['total'].sum().reset_index()
-            sm_rev.columns = [x_lbl_sm, 'Revenue']
-            fig = px.line(sm_rev, x=x_lbl_sm, y='Revenue', markers=True, color_discrete_sequence=[EARTH['primary']])
+            sm['month'] = sm['date'].dt.to_period('M').dt.to_timestamp()
+            sm_rev = sm.groupby('month')['total'].sum().reset_index()
+            sm_rev.columns = ['Month', 'Revenue']
+            fig = px.area(sm_rev, x='Month', y='Revenue', color_discrete_sequence=[EARTH['primary']])
             fig.update_layout(
                 plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
                 yaxis=dict(tickprefix='₱', tickformat=',.0f'),
-                xaxis_title=x_lbl_sm,
                 margin=dict(l=0, r=0, t=10, b=0)
             )
             st.plotly_chart(fig, use_container_width=True)
             if len(sm_rev) >= 2:
                 sales_dir = "growing" if sm_rev['Revenue'].iloc[-1] > sm_rev['Revenue'].iloc[0] else "declining"
                 chart_insight(
-                    f"Revenue is <b>{sales_dir}</b>. Latest {x_lbl_sm.lower()} "
-                    f"({sm_rev.iloc[-1][x_lbl_sm]}) recorded "
+                    f"Monthly revenue is <b>{sales_dir}</b>. Latest month "
+                    f"({sm_rev.iloc[-1]['Month'].strftime('%B %Y')}) recorded "
                     f"<b>₱{sm_rev.iloc[-1]['Revenue']:,.2f}</b> in revenue. "
                     f"See <b>Sales Analytics</b> for the full breakdown.",
                     'good' if sales_dir == 'growing' else 'warn'
@@ -1234,18 +1211,21 @@ if page == 'Dashboard Overview':
     # ============================================================================
     with st.container(border=True):
         st.markdown("#### Inventory Snapshot")
-        if len(overview_inv) > 0:
+        if len(overview_inv) > 0 and 'purchase_date' in overview_inv.columns:
             inv_ov = overview_inv.copy()
-            if 'alert_level' not in inv_ov.columns:
-                if 'spoilage_risk' in inv_ov.columns:
-                    inv_ov['alert_level'] = inv_ov['spoilage_risk'].replace({
+            inv_ov['purchase_date'] = pd.to_datetime(inv_ov['purchase_date'], errors='coerce')
+            inv_ov_f = render_year_quarter_month_filter(inv_ov, 'ov_inv', date_col='purchase_date')
+
+            if 'alert_level' not in inv_ov_f.columns:
+                if 'spoilage_risk' in inv_ov_f.columns:
+                    inv_ov_f['alert_level'] = inv_ov_f['spoilage_risk'].replace({
                         'High Risk': 'High Alert', 'Medium Risk': 'Medium Alert',
                         'Low Risk': 'Low Alert', 'Expired': 'Expired',
                     })
                 else:
-                    inv_ov['alert_level'] = 'Low Alert'
-            if 'quantity' in inv_ov.columns:
-                inv_ov.loc[inv_ov['quantity'] <= 0, 'alert_level'] = 'Out of Stock'
+                    inv_ov_f['alert_level'] = 'Low Alert'
+            if 'quantity' in inv_ov_f.columns:
+                inv_ov_f.loc[inv_ov_f['quantity'] <= 0, 'alert_level'] = 'Out of Stock'
 
             ALERT_COLORS_OV = {
                 'High Alert':   EARTH['danger'],
@@ -1255,23 +1235,27 @@ if page == 'Dashboard Overview':
                 'Out of Stock': '#8D6E63',
             }
             alert_order_ov = ['High Alert','Medium Alert','Low Alert','Expired','Out of Stock']
-            dist_inv = inv_ov['alert_level'].value_counts().reindex(alert_order_ov).fillna(0).reset_index()
-            dist_inv.columns = ['Alert Level', 'Count']
-            fig = px.bar(dist_inv, x='Alert Level', y='Count',
-                         color='Alert Level', color_discrete_map=ALERT_COLORS_OV,
-                         text_auto=True, category_orders={'Alert Level': alert_order_ov})
-            fig.update_layout(
-                plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                showlegend=False, margin=dict(l=0, r=0, t=10, b=0)
-            )
-            st.plotly_chart(fig, use_container_width=True)
 
-            urgent_ct = int(dist_inv.loc[dist_inv['Alert Level'].isin(['High Alert','Out of Stock']), 'Count'].sum())
-            chart_insight(
-                f"<b>{urgent_ct}</b> ingredient record(s) are High Alert or Out of Stock and need attention. "
-                f"See <b>Inventory Status</b> for the full restock guide.",
-                'warn' if urgent_ct > 0 else 'good'
-            )
+            if len(inv_ov_f) == 0:
+                st.info("No inventory records for this selection.")
+            else:
+                dist_inv = inv_ov_f['alert_level'].value_counts().reindex(alert_order_ov).fillna(0).reset_index()
+                dist_inv.columns = ['Alert Level', 'Count']
+                fig = px.bar(dist_inv, x='Alert Level', y='Count',
+                             color='Alert Level', color_discrete_map=ALERT_COLORS_OV,
+                             text_auto=True, category_orders={'Alert Level': alert_order_ov})
+                fig.update_layout(
+                    plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+                    showlegend=False, margin=dict(l=0, r=0, t=10, b=0)
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+                urgent_ct = int(dist_inv.loc[dist_inv['Alert Level'].isin(['High Alert','Out of Stock']), 'Count'].sum())
+                chart_insight(
+                    f"<b>{urgent_ct}</b> ingredient record(s) in this selection are High Alert or Out of Stock. "
+                    f"See <b>Inventory Status</b> for the full restock guide.",
+                    'warn' if urgent_ct > 0 else 'good'
+                )
         else:
             st.info("No inventory data yet. Go to the Database page to upload your inventory records.")
 
@@ -1282,7 +1266,34 @@ if page == 'Dashboard Overview':
     # ============================================================================
     with st.container(border=True):
         st.markdown("#### Menu Snapshot")
-        if len(overview_menu) > 0 and 'category' in overview_menu.columns:
+        # Menu items (DIM_ITEM) don't carry a date, so the date filter here
+        # runs on the sales log instead — showing which menu categories
+        # actually sold within the selected period.
+        if len(overview_sales) > 0 and 'category' in overview_sales.columns and 'date' in overview_sales.columns:
+            menu_sales_f = render_year_quarter_month_filter(overview_sales, 'ov_menu', date_col='date')
+            if len(menu_sales_f) == 0 or 'total' not in menu_sales_f.columns:
+                st.info("No sales records for this selection.")
+            else:
+                menu_cat_dist = menu_sales_f.groupby('category')['total'].sum().reset_index()
+                menu_cat_dist.columns = ['Category', 'Revenue']
+                fig = px.bar(menu_cat_dist.sort_values('Revenue', ascending=False),
+                             x='Category', y='Revenue',
+                             color_discrete_sequence=[EARTH['secondary']], text_auto=',.0f')
+                fig.update_layout(
+                    plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+                    yaxis=dict(tickprefix='₱', tickformat=',.0f'),
+                    margin=dict(l=0, r=0, t=10, b=0)
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+                top_cat_menu = menu_cat_dist.sort_values('Revenue', ascending=False).iloc[0]
+                n_menu_items = len(overview_menu) if len(overview_menu) > 0 else 0
+                chart_insight(
+                    f"<b>{top_cat_menu['Category']}</b> generated the most revenue in this period "
+                    f"(₱{top_cat_menu['Revenue']:,.2f}). Your menu has <b>{n_menu_items}</b> items total. "
+                    f"See <b>Menu Performance</b> for Keep/Improve/Reconsider recommendations."
+                )
+        elif len(overview_menu) > 0 and 'category' in overview_menu.columns:
             menu_cat_dist = overview_menu['category'].value_counts().reset_index()
             menu_cat_dist.columns = ['Category', 'Items']
             fig = px.bar(menu_cat_dist, x='Category', y='Items',
@@ -1292,6 +1303,7 @@ if page == 'Dashboard Overview':
                 margin=dict(l=0, r=0, t=10, b=0)
             )
             st.plotly_chart(fig, use_container_width=True)
+            st.caption("No dated sales records available yet, so this shows item counts by category instead of revenue.")
 
             top_cat_menu = menu_cat_dist.sort_values('Items', ascending=False).iloc[0]
             chart_insight(
@@ -1342,76 +1354,6 @@ elif page == 'Sales Analytics':
     st.markdown("---")
     st.markdown("### Sales Overview")
 
-    with st.container(border=True):
-        st.markdown("#### Daily Revenue Trend")
-        rev_trend_src = _sa_apply_filters(sales_df, 'sa_revtrend')
-        rtcol1, rtcol2 = st.columns([1, 2])
-        with rtcol1:
-            sa_gran = st.selectbox("Revenue View", ['Daily','Weekly','Monthly','Custom Date'], key='sa_gran')
-        with rtcol2:
-            if sa_gran == 'Custom Date' and 'date' in rev_trend_src.columns and len(rev_trend_src) > 0:
-                sa_rev_custom_range = st.date_input(
-                    "Date Range",
-                    value=(rev_trend_src['date'].min().date(), rev_trend_src['date'].max().date()),
-                    min_value=rev_trend_src['date'].min().date(), max_value=rev_trend_src['date'].max().date(),
-                    key='sa_rev_customrange'
-                )
-            else:
-                st.empty()
-        if 'date' in rev_trend_src.columns and 'total' in rev_trend_src.columns and len(rev_trend_src) > 0:
-            if sa_gran == 'Custom Date':
-                daily_tmp = rev_trend_src.copy()
-                if isinstance(sa_rev_custom_range, tuple) and len(sa_rev_custom_range) == 2:
-                    daily_tmp = daily_tmp[(daily_tmp['date'].dt.date >= sa_rev_custom_range[0]) & (daily_tmp['date'].dt.date <= sa_rev_custom_range[1])]
-                daily = daily_tmp.groupby(daily_tmp['date'].dt.date)['total'].sum().reset_index()
-                daily.columns = ['date', 'revenue']
-            elif sa_gran == 'Weekly':
-                daily_tmp = rev_trend_src.copy()
-                daily_tmp['period'] = daily_tmp['date'].dt.to_period('W').dt.start_time
-                daily = daily_tmp.groupby('period')['total'].sum().reset_index()
-                daily.columns = ['date', 'revenue']
-            elif sa_gran == 'Monthly':
-                daily_tmp = rev_trend_src.copy()
-                daily_tmp['period'] = daily_tmp['date'].dt.to_period('M').dt.to_timestamp()
-                daily = daily_tmp.groupby('period')['total'].sum().reset_index()
-                daily.columns = ['date', 'revenue']
-            else:
-                daily = rev_trend_src.groupby(rev_trend_src['date'].dt.date)['total'].sum().reset_index()
-                daily.columns = ['date', 'revenue']
-            daily['7-day MA'] = daily['revenue'].rolling(7, min_periods=1).mean()
-
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(
-                x=daily['date'], y=daily['revenue'],
-                name='Daily Revenue', line=dict(color=EARTH['light'], width=1),
-                opacity=0.6
-            ))
-            fig.add_trace(go.Scatter(
-                x=daily['date'], y=daily['7-day MA'],
-                name='7-day MA', line=dict(color=EARTH['primary'], width=2.5)
-            ))
-            fig.update_layout(
-                plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                yaxis=dict(tickprefix='₱', tickformat=',.0f'),
-                legend=dict(orientation='h', y=1.1),
-                margin=dict(l=0, r=0, t=10, b=0)
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
-            if len(daily) >= 2:
-                rev_trend = "up" if daily['7-day MA'].iloc[-1] > daily['7-day MA'].iloc[0] else "down"
-                peak_rev_row = daily.loc[daily['revenue'].idxmax()]
-                low_rev_row  = daily.loc[daily['revenue'].idxmin()]
-                chart_insight(
-                    f"Revenue is trending <b>{rev_trend}</b>. Latest 7-day average: "
-                    f"<b>₱{daily['7-day MA'].iloc[-1]:,.2f}</b> per day. Across the {len(daily)} periods shown, "
-                    f"the highest single revenue was <b>₱{peak_rev_row['revenue']:,.2f}</b> ({peak_rev_row['date']}), "
-                    f"the lowest was <b>₱{low_rev_row['revenue']:,.2f}</b> ({low_rev_row['date']}), and the "
-                    f"overall average was <b>₱{daily['revenue'].mean():,.2f}</b>."
-                )
-        else:
-            st.info("No sales records for this filter combination.")
-
     st.markdown("")
 
     with st.container(border=True):
@@ -1445,42 +1387,57 @@ elif page == 'Sales Analytics':
     st.markdown("")
 
     with st.container(border=True):
-        st.markdown("#### Top Performing Day")
-        top_day_src = _sa_apply_filters(sales_df, 'sa_topday')
-        if 'date' in top_day_src.columns and 'total' in top_day_src.columns and len(top_day_src) > 0:
+        st.markdown("#### Performance by Day of Week")
+        dow_metric = st.selectbox("Metric", ['Revenue', 'Transactions'], key='sa_dow_metric')
+        dow_src = _sa_apply_filters(sales_df, 'sa_dow')
+        if 'date' in dow_src.columns and len(dow_src) > 0:
             day_order = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']
-            dow = top_day_src.copy()
-            dow['day'] = dow['date'].dt.day_name()
-            dow_rev = dow.groupby('day')['total'].sum().reindex(day_order).reset_index()
-            dow_rev.columns = ['day', 'revenue']
-            if dow_rev['revenue'].notna().any():
-                max_day = dow_rev['revenue'].idxmax()
+            fc = dow_src.copy()
+            fc['day'] = fc['date'].dt.day_name()
+
+            if dow_metric == 'Revenue' and 'total' in fc.columns:
+                dow_tbl = fc.groupby('day')['total'].sum().reindex(day_order).reset_index()
+                dow_tbl.columns = ['day', 'value']
+                y_label, y_prefix, text_fmt = 'Revenue (₱)', '₱', '.2s'
             else:
-                max_day = -1
-            if max_day != -1:
+                dow_tbl = fc['day'].value_counts().reindex(day_order).reset_index()
+                dow_tbl.columns = ['day', 'value']
+                y_label, y_prefix, text_fmt = 'Transactions', '', True
+
+            if dow_tbl['value'].notna().any():
+                max_day = dow_tbl['value'].idxmax()
                 colors  = [EARTH['primary'] if i == max_day else EARTH['light']
-                           for i in range(len(dow_rev))]
-                fig = px.bar(dow_rev, x='day', y='revenue',
+                           for i in range(len(dow_tbl))]
+                fig = px.bar(dow_tbl, x='day', y='value',
                              color_discrete_sequence=[EARTH['primary']],
-                             text_auto='.2s')
+                             text_auto=text_fmt)
                 fig.update_traces(marker_color=colors)
                 fig.update_layout(
                     plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                    yaxis=dict(tickprefix='₱', tickformat=',.0f'),
-                    xaxis_title='', yaxis_title='Revenue (₱)',
+                    yaxis=dict(tickprefix=y_prefix, tickformat=',.0f'),
+                    xaxis_title='', yaxis_title=y_label,
                     margin=dict(l=0, r=0, t=10, b=0)
                 )
                 st.plotly_chart(fig, use_container_width=True)
 
-                dow_rev_sorted = dow_rev.dropna(subset=['revenue']).sort_values('revenue', ascending=False)
-                dow_breakdown = full_breakdown_html(
-                    list(zip(dow_rev_sorted['day'], dow_rev_sorted['revenue'])), prefix='₱'
-                )
-                chart_insight(
-                    f"Revenue by day of week — {dow_breakdown}. "
-                    f"<b>{dow_rev.loc[max_day,'day']}</b> generates the most revenue — "
-                    f"consider extra staffing or promos on this day."
-                )
+                dow_sorted = dow_tbl.dropna(subset=['value']).sort_values('value', ascending=False)
+                if dow_metric == 'Revenue':
+                    dow_breakdown = full_breakdown_html(
+                        list(zip(dow_sorted['day'], dow_sorted['value'])), prefix='₱'
+                    )
+                    chart_insight(
+                        f"Revenue by day of week — {dow_breakdown}. "
+                        f"<b>{dow_sorted.iloc[0]['day']}</b> generates the most revenue — "
+                        f"consider extra staffing or promos on this day."
+                    )
+                else:
+                    dow_breakdown = full_breakdown_html(
+                        list(zip(dow_sorted['day'], dow_sorted['value'])), suffix=' txns', decimals=0, show_pct=False
+                    )
+                    chart_insight(
+                        f"Transactions by day — {dow_breakdown}. "
+                        f"<b>{dow_sorted.iloc[0]['day']}</b> is the busiest day."
+                    )
             else:
                 st.info("No sales data for this filter combination.")
         else:
@@ -1492,26 +1449,11 @@ elif page == 'Sales Analytics':
         st.markdown("#### Sales Heatmap (Hour × Day)")
         if 'date' in sales_df.columns and len(sales_df) > 0:
             hm_years = sorted(sales_df['date'].dt.year.dropna().unique(), reverse=True)
-            hmy1, hmy2 = st.columns([1, 2])
-            with hmy1:
-                hm_sel_year = st.selectbox(
-                    "Year", ['All'] + [str(y) for y in hm_years] + ['Custom Date'], key='sales_heatmap_year'
-                )
-            with hmy2:
-                if hm_sel_year == 'Custom Date':
-                    hm_custom_range = st.date_input(
-                        "Date Range",
-                        value=(sales_df['date'].min().date(), sales_df['date'].max().date()),
-                        min_value=sales_df['date'].min().date(), max_value=sales_df['date'].max().date(),
-                        key='sales_heatmap_customrange'
-                    )
-                else:
-                    st.empty()
+            hm_sel_year = st.selectbox(
+                "Year", ['All'] + [str(y) for y in hm_years], key='sales_heatmap_year'
+            )
             hm = sales_df.copy()
-            if hm_sel_year == 'Custom Date':
-                if isinstance(hm_custom_range, tuple) and len(hm_custom_range) == 2:
-                    hm = hm[(hm['date'].dt.date >= hm_custom_range[0]) & (hm['date'].dt.date <= hm_custom_range[1])]
-            elif hm_sel_year != 'All':
+            if hm_sel_year != 'All':
                 hm = hm[hm['date'].dt.year == int(hm_sel_year)]
             hm['hour'] = hm['date'].dt.hour
             hm['day']  = hm['date'].dt.day_name()
@@ -1601,40 +1543,11 @@ elif page == 'Sales Analytics':
 
     st.markdown("")
 
-    # Bar — day of week pattern — own filter
-    with st.container(border=True):
-        st.markdown("#### Transactions by Day of Week")
-        tdow_src = _sa_apply_filters(sales_df, 'sa_tdow')
-        if 'date' in tdow_src.columns and len(tdow_src) > 0:
-            day_order = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']
-            fc = tdow_src.copy()
-            fc['day'] = fc['date'].dt.day_name()
-            dow = fc['day'].value_counts().reindex(day_order).reset_index()
-            dow.columns = ['day', 'count']
-            fig = px.bar(dow, x='day', y='count',
-                         color_discrete_sequence=[EARTH['secondary']],
-                         text_auto=True)
-            fig.update_layout(
-                plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                margin=dict(l=0, r=0, t=10, b=0)
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
-            if dow['count'].sum() > 0:
-                dow_sorted = dow.dropna(subset=['count']).sort_values('count', ascending=False)
-                dow_txn_html = full_breakdown_html(
-                    list(zip(dow_sorted['day'], dow_sorted['count'])), suffix=' txns', decimals=0, show_pct=False
-                )
-                chart_insight(
-                    f"Transactions by day — {dow_txn_html}. "
-                    f"<b>{dow_sorted.iloc[0]['day']}</b> is the busiest day."
-                )
-        else:
-            st.info("No sales records for this filter combination.")
-
-    st.markdown("")
-
-    # ── Monthly/Yearly trend — own filter ────────────────────────────────
+    # ── Sales Trend — merges the old "Daily Revenue Trend" and "Sales
+    # Trend" charts into one: pick any metric, any granularity (Daily up
+    # to Yearly, or an exact Custom Date range), with a moving-average
+    # overlay at the finer granularities where a single day/week can be
+    # noisy on its own. ──────────────────────────────────────────────────
     with st.container(border=True):
         st.markdown("#### Sales Trend")
         trend_src = _sa_apply_filters(sales_df, 'sa_trend')
@@ -1647,7 +1560,8 @@ elif page == 'Sales Analytics':
                 )
             with tcol2:
                 granularity = st.selectbox(
-                    "View by", ['Monthly', 'Yearly', 'Custom Date'], key='trend_granularity'
+                    "View by", ['Daily', 'Weekly', 'Monthly', 'Yearly', 'Custom Date'],
+                    index=2, key='trend_granularity'
                 )
             with tcol3:
                 if granularity == 'Custom Date':
@@ -1665,53 +1579,76 @@ elif page == 'Sales Analytics':
                 if isinstance(sa_trend_custom_range, tuple) and len(sa_trend_custom_range) == 2:
                     fc2 = fc2[(fc2['date'].dt.date >= sa_trend_custom_range[0]) & (fc2['date'].dt.date <= sa_trend_custom_range[1])]
                 fc2['period'] = fc2['date'].dt.date
-                x_title = 'Date'
+                x_title, ma_window = 'Date', 7
+            elif granularity == 'Daily':
+                fc2['period'] = fc2['date'].dt.date
+                x_title, ma_window = 'Date', 7
+            elif granularity == 'Weekly':
+                fc2['period'] = fc2['date'].dt.to_period('W').dt.start_time
+                x_title, ma_window = 'Week', 4
             elif granularity == 'Monthly':
                 fc2['period'] = fc2['date'].dt.to_period('M').dt.to_timestamp()
-                x_title = 'Month'
+                x_title, ma_window = 'Month', 3
             else:
                 fc2['period'] = fc2['date'].dt.to_period('Y').dt.to_timestamp()
-                x_title = 'Year'
+                x_title, ma_window = 'Year', 1  # no smoothing needed at yearly granularity
 
             agg_map = {}
             if 'total' in fc2.columns:    agg_map['total'] = 'sum'
             if 'quantity' in fc2.columns: agg_map['quantity'] = 'sum'
 
-            monthly = fc2.groupby('period').agg(
+            trend_tbl = fc2.groupby('period').agg(
                 transactions=('date', 'count'),
                 **({'revenue': ('total', 'sum')} if 'total' in fc2.columns else {}),
                 **({'units': ('quantity', 'sum')} if 'quantity' in fc2.columns else {})
-            ).reset_index()
+            ).reset_index().sort_values('period')
 
             y_map = {
-                'Revenue':      ('revenue', 'Revenue (₱)'),
-                'Transactions': ('transactions', 'Transactions'),
-                'Units Sold':   ('units', 'Units Sold'),
+                'Revenue':      ('revenue', 'Revenue (₱)', '₱'),
+                'Transactions': ('transactions', 'Transactions', ''),
+                'Units Sold':   ('units', 'Units Sold', ''),
             }
-            y_col, y_label = y_map[metric_choice]
+            y_col, y_label, y_prefix = y_map[metric_choice]
 
-            if y_col in monthly.columns:
-                fig = px.line(monthly, x='period', y=y_col, markers=True,
-                              color_discrete_sequence=[EARTH['accent']])
+            if y_col in trend_tbl.columns:
+                show_ma = ma_window > 1 and len(trend_tbl) > 1
+                if show_ma:
+                    trend_tbl[f'{ma_window}-period MA'] = trend_tbl[y_col].rolling(ma_window, min_periods=1).mean()
+
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=trend_tbl['period'], y=trend_tbl[y_col],
+                    mode='lines+markers', name=metric_choice,
+                    line=dict(color=EARTH['light'] if show_ma else EARTH['accent'], width=1 if show_ma else 2.5),
+                    opacity=0.6 if show_ma else 1
+                ))
+                if show_ma:
+                    fig.add_trace(go.Scatter(
+                        x=trend_tbl['period'], y=trend_tbl[f'{ma_window}-period MA'],
+                        mode='lines', name=f'{ma_window}-period MA',
+                        line=dict(color=EARTH['primary'], width=2.5)
+                    ))
                 fig.update_layout(
                     plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
                     xaxis_title=x_title, yaxis_title=y_label,
+                    yaxis=dict(tickprefix=y_prefix, tickformat=',.0f'),
+                    legend=dict(orientation='h', y=1.1),
                     margin=dict(l=0, r=0, t=10, b=0)
                 )
                 st.plotly_chart(fig, use_container_width=True)
 
-                if len(monthly) >= 2:
-                    trend_delta = monthly[y_col].iloc[-1] - monthly[y_col].iloc[0]
+                if len(trend_tbl) >= 2:
+                    trend_delta = trend_tbl[y_col].iloc[-1] - trend_tbl[y_col].iloc[0]
                     trend_word = "grown" if trend_delta > 0 else "declined"
-                    peak_row = monthly.loc[monthly[y_col].idxmax()]
-                    low_row  = monthly.loc[monthly[y_col].idxmin()]
+                    peak_row = trend_tbl.loc[trend_tbl[y_col].idxmax()]
+                    low_row  = trend_tbl.loc[trend_tbl[y_col].idxmin()]
                     chart_insight(
                         f"{metric_choice} has <b>{trend_word}</b> from "
-                        f"{monthly[y_col].iloc[0]:,.0f} to <b>{monthly[y_col].iloc[-1]:,.0f}</b> "
-                        f"across this range ({len(monthly)} {x_title.lower()}s shown). "
-                        f"The highest point was <b>{peak_row[y_col]:,.0f}</b> ({peak_row['period']}) and the "
-                        f"lowest was <b>{low_row[y_col]:,.0f}</b> ({low_row['period']}); average across the "
-                        f"range was <b>{monthly[y_col].mean():,.0f}</b>."
+                        f"{y_prefix}{trend_tbl[y_col].iloc[0]:,.0f} to <b>{y_prefix}{trend_tbl[y_col].iloc[-1]:,.0f}</b> "
+                        f"across this range ({len(trend_tbl)} {x_title.lower()}(s) shown). "
+                        f"The highest point was <b>{y_prefix}{peak_row[y_col]:,.0f}</b> ({peak_row['period']}) and the "
+                        f"lowest was <b>{y_prefix}{low_row[y_col]:,.0f}</b> ({low_row['period']}); average across the "
+                        f"range was <b>{y_prefix}{trend_tbl[y_col].mean():,.0f}</b>."
                     )
             else:
                 st.info(f"'{metric_choice}' isn't available in this dataset.")
@@ -1755,21 +1692,12 @@ elif page == 'Waste Analytics':
 
     if display_waste is not None and len(display_waste) > 0:
 
-        def _wa_apply_filters(base_df, key_prefix, show_reason=True, show_viewby=True):
-            """Renders its own Category / Waste Reason / View by
-            (Weekly / Monthly / Yearly / Custom Date) filter row and
-            returns the filtered dataframe — kept local to each chart so
-            no two visualizations on this page share filters. Weekly /
-            Monthly / Yearly are quick presets relative to the most
-            recent date in the data (last 7 / 30 / 365 days); Custom Date
-            reveals an exact date-range picker instead. Pass
-            show_viewby=False for a chart that already has its own
-            dedicated period-bucketing control (e.g. a trend chart with a
-            Weekly/Monthly/Yearly grouping selector) — otherwise this
-            preset would pre-restrict the data before that chart's own
-            control ever sees it."""
+        def _wa_apply_filters(base_df, key_prefix, show_reason=True):
+            """Renders its own Category / Waste Reason / Time Period filter
+            row and returns the filtered dataframe — kept local to each
+            chart so no two visualizations on this page share filters."""
             df_f = base_df.copy()
-            n_cols = 1 + int(show_reason) + int(show_viewby) * 2
+            n_cols = 3 if show_reason else 2
             cols = st.columns(n_cols)
             with cols[0]:
                 if 'category' in df_f.columns:
@@ -1785,21 +1713,8 @@ elif page == 'Waste Analytics':
                         reasons = sorted(df_f['waste_reason'].dropna().unique().tolist())
                         sel_reason = st.selectbox("Waste Reason", ['All'] + reasons, key=f'{key_prefix}_reason')
                 idx += 1
-            if sel_cat != 'All':
-                df_f = df_f[df_f['category'] == sel_cat]
-            if sel_reason != 'All':
-                df_f = df_f[df_f['waste_reason'] == sel_reason]
-            if not show_viewby:
-                return df_f
             with cols[idx]:
-                view_by = st.selectbox(
-                    "View by", ['Weekly', 'Monthly', 'Yearly', 'Custom Date'],
-                    index=1, key=f'{key_prefix}_viewby'
-                )
-            idx += 1
-            date_range = None
-            with cols[idx]:
-                if view_by == 'Custom Date' and 'date' in df_f.columns and len(df_f) > 0:
+                if 'date' in df_f.columns and len(df_f) > 0:
                     _min_d = df_f['date'].min().date()
                     _max_d = df_f['date'].max().date()
                     date_range = st.date_input(
@@ -1807,16 +1722,15 @@ elif page == 'Waste Analytics':
                         min_value=_min_d, max_value=_max_d, key=f'{key_prefix}_daterange'
                     )
                 else:
-                    st.empty()
+                    date_range = None
 
-            if 'date' in df_f.columns and len(df_f) > 0:
-                if view_by == 'Custom Date':
-                    if date_range is not None and isinstance(date_range, tuple) and len(date_range) == 2:
-                        df_f = df_f[(df_f['date'].dt.date >= date_range[0]) & (df_f['date'].dt.date <= date_range[1])]
-                else:
-                    days_back = {'Weekly': 7, 'Monthly': 30, 'Yearly': 365}[view_by]
-                    max_d = df_f['date'].max()
-                    df_f = df_f[df_f['date'] >= max_d - pd.Timedelta(days=days_back)]
+            if sel_cat != 'All':
+                df_f = df_f[df_f['category'] == sel_cat]
+            if sel_reason != 'All':
+                df_f = df_f[df_f['waste_reason'] == sel_reason]
+            if date_range is not None and isinstance(date_range, tuple) and len(date_range) == 2 and 'date' in df_f.columns:
+                start_d, end_d = date_range
+                df_f = df_f[(df_f['date'].dt.date >= start_d) & (df_f['date'].dt.date <= end_d)]
             return df_f
 
         # ── Waste Summary (KPIs) — its own filter ───────────────────────────
@@ -1928,12 +1842,12 @@ elif page == 'Waste Analytics':
         # Waste trend — its own filter (granularity + category + time period)
         with st.container(border=True):
             st.markdown("#### Waste Cost Trend")
-            trend_waste = _wa_apply_filters(display_waste, 'wa_trend', show_reason=False, show_viewby=False)
+            trend_waste = _wa_apply_filters(display_waste, 'wa_trend', show_reason=False)
             if 'date' in trend_waste.columns and 'total_waste_cost' in trend_waste.columns and len(trend_waste) > 0:
                 wtc1, wtc2 = st.columns([1, 2])
                 with wtc1:
                     trend_granularity = st.selectbox(
-                        "View by", ['Weekly', 'Monthly', 'Yearly', 'Custom Date'], index=1, key='waste_trend_granularity'
+                        "View by", ['Daily', 'Weekly', 'Monthly', 'Custom Date'], index=2, key='waste_trend_granularity'
                     )
                 with wtc2:
                     if trend_granularity == 'Custom Date':
@@ -1953,12 +1867,12 @@ elif page == 'Waste Analytics':
                         twaste = twaste[(twaste['date'].dt.date >= wa_trend_custom_range[0]) & (twaste['date'].dt.date <= wa_trend_custom_range[1])]
                     twaste['period'] = twaste['date'].dt.date
                     ma_window = 7
+                elif trend_granularity == 'Daily':
+                    twaste['period'] = twaste['date'].dt.date
+                    ma_window = 7
                 elif trend_granularity == 'Weekly':
                     twaste['period'] = twaste['date'].dt.to_period('W').dt.start_time
                     ma_window = 4
-                elif trend_granularity == 'Yearly':
-                    twaste['period'] = twaste['date'].dt.year
-                    ma_window = 2
                 else:
                     twaste['period'] = twaste['date'].dt.to_period('M').dt.to_timestamp()
                     ma_window = 3
@@ -2542,47 +2456,17 @@ elif page == 'Inventory Status':
         if 'purchase_date' in inv_hist.columns:
             inv_hist['purchase_date'] = pd.to_datetime(inv_hist['purchase_date'], errors='coerce')
 
-        # ── "Current" snapshot window — user-selectable, defaults to the
-        # most recent 30 days of purchases (inventory holds 3 years of
-        # history for trend purposes; the snapshot below should reflect
-        # what's actually on hand as of the chosen window) ────────────────
-        if 'purchase_date' in inv_hist.columns and len(inv_hist) > 0:
-            snap1, snap2 = st.columns([1, 2])
-            with snap1:
-                snap_view_by = st.selectbox(
-                    "Snapshot window", ['Weekly', 'Monthly', 'Yearly', 'Custom Date'],
-                    index=1, key='inv_snapshot_viewby'
-                )
-            with snap2:
-                if snap_view_by == 'Custom Date':
-                    snap_custom_range = st.date_input(
-                        "Date Range",
-                        value=(inv_hist['purchase_date'].min().date(), inv_hist['purchase_date'].max().date()),
-                        min_value=inv_hist['purchase_date'].min().date(), max_value=inv_hist['purchase_date'].max().date(),
-                        key='inv_snapshot_customrange'
-                    )
-                else:
-                    st.empty()
-            if snap_view_by == 'Custom Date':
-                if isinstance(snap_custom_range, tuple) and len(snap_custom_range) == 2:
-                    inv = inv_hist[
-                        (inv_hist['purchase_date'].dt.date >= snap_custom_range[0]) &
-                        (inv_hist['purchase_date'].dt.date <= snap_custom_range[1])
-                    ].copy()
-                else:
-                    inv = inv_hist.copy()
-                snap_caption = f"Snapshot for {snap_custom_range[0]} to {snap_custom_range[1]}." if isinstance(snap_custom_range, tuple) and len(snap_custom_range) == 2 else "Custom snapshot."
-            else:
-                days_back = {'Weekly': 7, 'Monthly': 30, 'Yearly': 365}[snap_view_by]
-                cutoff = inv_hist['purchase_date'].max() - pd.Timedelta(days=days_back)
-                inv = inv_hist[inv_hist['purchase_date'] >= cutoff].copy()
-                snap_caption = f"Snapshot of the most recent {snap_view_by.lower()} window (last {days_back} days) of purchases."
+        # ── "Current" snapshot — most recent 30 days of purchases ─────────
+        # (inventory now holds 3 years of history for trend purposes; KPIs /
+        # alert levels below should reflect what's actually on hand today)
+        if 'purchase_date' in inv_hist.columns:
+            cutoff = inv_hist['purchase_date'].max() - pd.Timedelta(days=30)
+            inv = inv_hist[inv_hist['purchase_date'] >= cutoff].copy()
         else:
             inv = inv_hist.copy()
-            snap_caption = "Snapshot of all purchases."
 
         # ── Summary badges ────────────────────────────────────────────────
-        st.caption(f"{snap_caption} Full 3-year history is available in the 'Inventory Value Over Time' chart below.")
+        st.caption("Snapshot of the most recent 30 days of purchases. Full 3-year history is available in the 'Inventory Value Over Time' chart below.")
         alert_order = ['High Alert','Medium Alert','Low Alert','Expired','Out of Stock']
         alert_counts = inv['alert_level'].value_counts()
 
