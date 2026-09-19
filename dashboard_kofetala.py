@@ -409,6 +409,30 @@ def normalize_text_columns(df, cols):
         df[col] = key.map(canonical)
     return df
 
+# ── Known placeholder/template text that sometimes ends up as a real row —
+# e.g. someone uploads a CSV where the template's example item name
+# ("Product Name (regular)") was left un-edited. Stripped out ONCE, right
+# after loading each dataframe, so it never appears anywhere on the
+# dashboard (every chart, KPI, and table) instead of having to be
+# special-cased on each page separately.
+_PLACEHOLDER_ITEM_NAMES = {
+    'product name (regular)', 'product name', 'item name (regular)',
+    'item name', 'item_name', 'sample item', 'example item', 'item',
+}
+
+def strip_placeholder_rows(df, col_candidates=('item', 'item_name')):
+    """Drops rows whose item/item_name value matches a known placeholder
+    string (case-insensitive, whitespace-trimmed). Safe no-op if df is
+    None/empty or none of the candidate columns exist."""
+    if df is None or len(df) == 0:
+        return df
+    df = df.copy()
+    for col in col_candidates:
+        if col in df.columns:
+            key = df[col].astype(str).str.strip().str.lower()
+            df = df[~key.isin(_PLACEHOLDER_ITEM_NAMES)]
+    return df
+
 # ── Quarter → Month mapping, shared by every Year/Quarter/Month filter row ──
 QUARTER_MONTHS = {
     'Q1': ['January', 'February', 'March'],
@@ -846,6 +870,14 @@ features_df  = load_csv(DATA_PATHS['features'])
 models       = {name: load_model(path) for name, path in MODEL_PATHS.items()}
 metrics      = load_metrics()
 
+# ── Drop known placeholder/template rows (e.g. "Product Name (regular)")
+# from every dataset that carries an item name, right after loading — so
+# they're gone from every page, chart, and KPI at once. See
+# strip_placeholder_rows() above for the full explanation.
+sales_df = strip_placeholder_rows(sales_df, col_candidates=('item', 'item_name'))
+menu_df  = strip_placeholder_rows(menu_df,  col_candidates=('item_name',))
+waste_df = strip_placeholder_rows(waste_df, col_candidates=('item_name',))
+
 # ============================================================================
 # SIDEBAR NAVIGATION
 # ============================================================================
@@ -1073,26 +1105,41 @@ if page == 'Dashboard Overview':
     with st.container(border=True):
         st.markdown("#### Sales Snapshot")
         if len(overview_sales) > 0 and 'date' in overview_sales.columns and 'total' in overview_sales.columns:
-            sm = overview_sales.copy()
-            sm['month'] = sm['date'].dt.to_period('M').dt.to_timestamp()
-            sm_rev = sm.groupby('month')['total'].sum().reset_index()
-            sm_rev.columns = ['Month', 'Revenue']
-            fig = px.area(sm_rev, x='Month', y='Revenue', color_discrete_sequence=[EARTH['primary']])
-            fig.update_layout(
-                plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                yaxis=dict(tickprefix='₱', tickformat=',.0f'),
-                margin=dict(l=0, r=0, t=10, b=0)
-            )
-            st.plotly_chart(fig, use_container_width=True)
-            if len(sm_rev) >= 2:
-                sales_dir = "growing" if sm_rev['Revenue'].iloc[-1] > sm_rev['Revenue'].iloc[0] else "declining"
-                chart_insight(
-                    f"Monthly revenue is <b>{sales_dir}</b>. Latest month "
-                    f"({sm_rev.iloc[-1]['Month'].strftime('%B %Y')}) recorded "
-                    f"<b>₱{sm_rev.iloc[-1]['Revenue']:,.2f}</b> in revenue. "
-                    f"See <b>Sales Analytics</b> for the full breakdown.",
-                    'good' if sales_dir == 'growing' else 'warn'
+            # Same Year/Quarter/Month (+ Custom Date) filter used by the
+            # Waste, Inventory, and Menu snapshots below — this chart was
+            # missing it before, so it always showed all-time data
+            # regardless of period, unlike every other snapshot on this page.
+            sm_f = render_year_quarter_month_filter(overview_sales, 'ov_sales', date_col='date')
+            if len(sm_f) == 0:
+                st.info("No sales records for this selection.")
+            else:
+                sm = sm_f.copy()
+                sm['month'] = sm['date'].dt.to_period('M').dt.to_timestamp()
+                sm_rev = sm.groupby('month')['total'].sum().reset_index()
+                sm_rev.columns = ['Month', 'Revenue']
+                fig = px.area(sm_rev, x='Month', y='Revenue', color_discrete_sequence=[EARTH['primary']])
+                fig.update_layout(
+                    plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+                    yaxis=dict(tickprefix='₱', tickformat=',.0f'),
+                    margin=dict(l=0, r=0, t=10, b=0)
                 )
+                st.plotly_chart(fig, use_container_width=True)
+                if len(sm_rev) >= 2:
+                    sales_dir = "growing" if sm_rev['Revenue'].iloc[-1] > sm_rev['Revenue'].iloc[0] else "declining"
+                    chart_insight(
+                        f"Monthly revenue is <b>{sales_dir}</b>. Latest month "
+                        f"({sm_rev.iloc[-1]['Month'].strftime('%B %Y')}) recorded "
+                        f"<b>₱{sm_rev.iloc[-1]['Revenue']:,.2f}</b> in revenue. "
+                        f"See <b>Sales Analytics</b> for the full breakdown.",
+                        'good' if sales_dir == 'growing' else 'warn'
+                    )
+                elif len(sm_rev) == 1:
+                    chart_insight(
+                        f"Only one month of data in this selection: "
+                        f"<b>{sm_rev.iloc[0]['Month'].strftime('%B %Y')}</b> recorded "
+                        f"<b>₱{sm_rev.iloc[0]['Revenue']:,.2f}</b> in revenue. "
+                        f"See <b>Sales Analytics</b> for the full breakdown."
+                    )
         else:
             st.info("No sales data yet. Go to the Database page to upload your sales log.")
 
@@ -1330,28 +1377,34 @@ elif page == 'Sales Analytics':
         this page share the same filter controls."""
         return render_year_quarter_month_filter(base_df, key_prefix, date_col='date')
 
-    # ── Business Summary (moved from Dashboard Overview) ────────────────
-    st.markdown("### Business Summary")
-    bcol1, bcol2, bcol3, bcol4, bcol5 = st.columns(5)
+    # ── Business Summary — boxed and filterable, uniform with the Waste
+    # Summary box on Waste Analytics and the Performance Distribution box
+    # on Menu Performance. This absorbs what used to be a separate
+    # "Transaction KPIs" section further down the page, so the headline
+    # numbers for Sales Analytics all live together at the top now.
+    with st.container(border=True):
+        st.markdown("### Business Summary")
+        kpi_src = _sa_apply_filters(sales_df, 'sa_summary')
+        st.caption(f"Showing **{len(kpi_src):,}** of {len(sales_df):,} records")
 
-    with bcol1:
-        stat_card("Total Records", f"{len(sales_df):,}")
-    with bcol2:
-        rev = sales_df['total'].sum() if 'total' in sales_df.columns else 0
-        stat_card("Total Revenue", f"₱{rev:,.2f}")
-    with bcol3:
-        total_waste_cost_sa = waste_df['total_waste_cost'].sum() if (waste_df is not None and 'total_waste_cost' in waste_df.columns) else 0
-        stat_card("Total Waste", f"₱{total_waste_cost_sa:,.2f}")
-    with bcol4:
-        if 'date' in sales_df.columns:
-            days = (sales_df['date'].max() - sales_df['date'].min()).days
-            stat_card("Date Range", f"{days} days")
-    with bcol5:
-        # Count total menu items from the menu master list
-        n_menu = len(menu_df) if menu_df is not None else 0
-        stat_card("Menu Items", n_menu)
+        bcol1, bcol2, bcol3, bcol4, bcol5 = st.columns(5)
+        with bcol1:
+            stat_card("Total Transactions", f"{len(kpi_src):,}")
+        with bcol2:
+            rev = kpi_src['total'].sum() if 'total' in kpi_src.columns else 0
+            stat_card("Total Revenue", f"₱{rev:,.2f}")
+        with bcol3:
+            qty = kpi_src['quantity'].sum() if 'quantity' in kpi_src.columns else 0
+            stat_card("Units Sold", f"{qty:,.0f}")
+        with bcol4:
+            avg = kpi_src['total'].mean() if 'total' in kpi_src.columns else 0
+            stat_card("Avg Transaction", f"₱{avg:,.2f}")
+        with bcol5:
+            # Count total menu items from the menu master list
+            n_menu = len(menu_df) if menu_df is not None else 0
+            stat_card("Menu Items", n_menu)
 
-    st.markdown("---")
+    st.markdown("")
     st.markdown("### Sales Overview")
 
     st.markdown("")
@@ -1483,27 +1536,8 @@ elif page == 'Sales Analytics':
 
     st.markdown("---")
 
-    # ── KPIs — own filter ────────────────────────────────────────────────
-    with st.container(border=True):
-        st.markdown("#### Transaction KPIs")
-        kpi_src = _sa_apply_filters(sales_df, 'sa_kpi')
-        st.caption(f"Showing **{len(kpi_src):,}** records")
-
-        k1, k2, k3, k4 = st.columns(4)
-        with k1:
-            stat_card("Total Transactions", f"{len(kpi_src):,}")
-        with k2:
-            rev = kpi_src['total'].sum() if 'total' in kpi_src.columns else 0
-            stat_card("Total Revenue", f"₱{rev:,.2f}")
-        with k3:
-            qty = kpi_src['quantity'].sum() if 'quantity' in kpi_src.columns else 0
-            stat_card("Units Sold", f"{qty:,}")
-        with k4:
-            avg = kpi_src['total'].mean() if 'total' in kpi_src.columns else 0
-            stat_card("Avg Transaction", f"₱{avg:,.2f}")
-
-    st.markdown("")
-
+    # Transaction KPIs now live in the boxed "Business Summary" section at
+    # the top of this page (see above) instead of here.
     item_col = 'item' if 'item' in sales_df.columns else \
                'item_name' if 'item_name' in sales_df.columns else None
 
@@ -1710,26 +1744,29 @@ elif page == 'Waste Analytics':
                     df_f = df_f[df_f['waste_reason'] == sel_reason]
             return df_f
 
-        # ── Waste Summary (KPIs) — its own filter ───────────────────────────
-        st.markdown("### Waste Summary")
-        kpi_waste = _wa_apply_filters(display_waste, 'wa_kpi')
-        st.caption(f"Showing **{len(kpi_waste):,}** of {len(display_waste):,} waste records")
+        # ── Waste Summary (KPIs) — boxed, uniform with the Business Summary
+        # box on Sales Analytics and the Performance Distribution box on
+        # Menu Performance ───────────────────────────────────────────────
+        with st.container(border=True):
+            st.markdown("### Waste Summary")
+            kpi_waste = _wa_apply_filters(display_waste, 'wa_kpi')
+            st.caption(f"Showing **{len(kpi_waste):,}** of {len(display_waste):,} waste records")
 
-        k1, k2, k3, k4 = st.columns(4)
-        with k1:
-            total_qty = kpi_waste['quantity_wasted'].sum() if 'quantity_wasted' in kpi_waste.columns else 0
-            stat_card("Total Units Wasted", f"{int(total_qty):,}")
-        with k2:
-            total_cost = kpi_waste['total_waste_cost'].sum() if 'total_waste_cost' in kpi_waste.columns else 0
-            stat_card("Total Waste Cost", f"₱{total_cost:,.2f}")
-        with k3:
-            n_items = kpi_waste['item_name'].nunique() if 'item_name' in kpi_waste.columns else 0
-            stat_card("Unique Items Wasted", n_items)
-        with k4:
-            n_days = kpi_waste['date'].nunique() if 'date' in kpi_waste.columns else 0
-            stat_card("Days Tracked", n_days)
+            k1, k2, k3, k4 = st.columns(4)
+            with k1:
+                total_qty = kpi_waste['quantity_wasted'].sum() if 'quantity_wasted' in kpi_waste.columns else 0
+                stat_card("Total Units Wasted", f"{int(total_qty):,}")
+            with k2:
+                total_cost = kpi_waste['total_waste_cost'].sum() if 'total_waste_cost' in kpi_waste.columns else 0
+                stat_card("Total Waste Cost", f"₱{total_cost:,.2f}")
+            with k3:
+                n_items = kpi_waste['item_name'].nunique() if 'item_name' in kpi_waste.columns else 0
+                stat_card("Unique Items Wasted", n_items)
+            with k4:
+                n_days = kpi_waste['date'].nunique() if 'date' in kpi_waste.columns else 0
+                stat_card("Days Tracked", n_days)
 
-        st.markdown("---")
+        st.markdown("")
 
         # ── Charts ────────────────────────────────────────────────────────
         # Bar — waste cost by item (top 10) — own filter
