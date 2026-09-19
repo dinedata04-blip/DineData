@@ -1432,7 +1432,7 @@ elif page == 'Sales Analytics':
                     )
                 else:
                     dow_breakdown = full_breakdown_html(
-                        list(zip(dow_sorted['day'], dow_sorted['value'])), suffix=' txns', decimals=0, show_pct=False
+                        list(zip(dow_sorted['day'], dow_sorted['value'])), suffix=' transactions', decimals=0, show_pct=False
                     )
                     chart_insight(
                         f"Transactions by day — {dow_breakdown}. "
@@ -1448,41 +1448,38 @@ elif page == 'Sales Analytics':
     with st.container(border=True):
         st.markdown("#### Sales Heatmap (Hour × Day)")
         if 'date' in sales_df.columns and len(sales_df) > 0:
-            hm_years = sorted(sales_df['date'].dt.year.dropna().unique(), reverse=True)
-            hm_sel_year = st.selectbox(
-                "Year", ['All'] + [str(y) for y in hm_years], key='sales_heatmap_year'
-            )
-            hm = sales_df.copy()
-            if hm_sel_year != 'All':
-                hm = hm[hm['date'].dt.year == int(hm_sel_year)]
+            hm = render_year_quarter_month_filter(sales_df, 'sales_heatmap', date_col='date')
             hm['hour'] = hm['date'].dt.hour
             hm['day']  = hm['date'].dt.day_name()
             day_order2 = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']
             pivot = hm.groupby(['day','hour']).size().unstack(fill_value=0)
             pivot = pivot.reindex([d for d in day_order2 if d in pivot.index])
-            fig = px.imshow(pivot,
-                            color_continuous_scale=['#FAF6F1','#C4A882','#6F4E37'],
-                            aspect='auto',
-                            labels=dict(x='Hour of Day', y='Day', color='Transactions'))
-            fig.update_layout(
-                margin=dict(l=0, r=0, t=10, b=0),
-                paper_bgcolor='rgba(0,0,0,0)'
-            )
-            st.plotly_chart(fig, use_container_width=True)
+            if len(pivot) == 0:
+                st.info("No sales records for this selection.")
+            else:
+                fig = px.imshow(pivot,
+                                color_continuous_scale=['#FAF6F1','#C4A882','#6F4E37'],
+                                aspect='auto',
+                                labels=dict(x='Hour of Day', y='Day', color='Transactions'))
+                fig.update_layout(
+                    margin=dict(l=0, r=0, t=10, b=0),
+                    paper_bgcolor='rgba(0,0,0,0)'
+                )
+                st.plotly_chart(fig, use_container_width=True)
 
-            if pivot.values.sum() > 0:
-                by_day_totals = pivot.sum(axis=1).sort_values(ascending=False)
-                busiest_day_sa = by_day_totals.index[0]
-                busiest_hour = pivot.sum(axis=0).idxmax()
-                day_txn_breakdown = full_breakdown_html(
-                    list(by_day_totals.items()), suffix=' txns', decimals=0, show_pct=False
-                )
-                chart_insight(
-                    f"Transactions by day — {day_txn_breakdown}. "
-                    f"<b>{busiest_day_sa}</b> is the busiest day overall, and "
-                    f"<b>{busiest_hour}:00</b> is the busiest hour across the week. "
-                    f"Darker cells mark your peak traffic windows."
-                )
+                if pivot.values.sum() > 0:
+                    by_day_totals = pivot.sum(axis=1).sort_values(ascending=False)
+                    busiest_day_sa = by_day_totals.index[0]
+                    busiest_hour = pivot.sum(axis=0).idxmax()
+                    day_txn_breakdown = full_breakdown_html(
+                        list(by_day_totals.items()), suffix=' transactions', decimals=0, show_pct=False
+                    )
+                    chart_insight(
+                        f"Transactions by day — {day_txn_breakdown}. "
+                        f"<b>{busiest_day_sa}</b> is the busiest day overall, and "
+                        f"<b>{busiest_hour}:00</b> is the busiest hour across the week. "
+                        f"Darker cells mark your peak traffic windows."
+                    )
 
     st.markdown("---")
 
@@ -1693,44 +1690,24 @@ elif page == 'Waste Analytics':
     if display_waste is not None and len(display_waste) > 0:
 
         def _wa_apply_filters(base_df, key_prefix, show_reason=True):
-            """Renders its own Category / Waste Reason / Time Period filter
-            row and returns the filtered dataframe — kept local to each
-            chart so no two visualizations on this page share filters."""
-            df_f = base_df.copy()
-            n_cols = 3 if show_reason else 2
-            cols = st.columns(n_cols)
-            with cols[0]:
-                if 'category' in df_f.columns:
-                    cats = sorted(df_f['category'].dropna().unique().tolist())
-                    sel_cat = st.selectbox("Category", ['All'] + cats, key=f'{key_prefix}_cat')
-                else:
-                    sel_cat = 'All'
-            idx = 1
-            sel_reason = 'All'
-            if show_reason:
-                with cols[idx]:
-                    if 'waste_reason' in df_f.columns:
-                        reasons = sorted(df_f['waste_reason'].dropna().unique().tolist())
-                        sel_reason = st.selectbox("Waste Reason", ['All'] + reasons, key=f'{key_prefix}_reason')
-                idx += 1
-            with cols[idx]:
-                if 'date' in df_f.columns and len(df_f) > 0:
-                    _min_d = df_f['date'].min().date()
-                    _max_d = df_f['date'].max().date()
-                    date_range = st.date_input(
-                        "Date Range", value=(_min_d, _max_d),
-                        min_value=_min_d, max_value=_max_d, key=f'{key_prefix}_daterange'
-                    )
-                else:
-                    date_range = None
-
-            if sel_cat != 'All':
-                df_f = df_f[df_f['category'] == sel_cat]
-            if sel_reason != 'All':
-                df_f = df_f[df_f['waste_reason'] == sel_reason]
-            if date_range is not None and isinstance(date_range, tuple) and len(date_range) == 2 and 'date' in df_f.columns:
-                start_d, end_d = date_range
-                df_f = df_f[(df_f['date'].dt.date >= start_d) & (df_f['date'].dt.date <= end_d)]
+            """Renders the same Year/Quarter/Month (+ Custom Date) filter row
+            used by Transaction KPIs on Sales Analytics and Performance
+            Distribution on Menu Performance, plus a Category select and
+            (optionally) a Waste Reason select — kept local to each chart so
+            no two visualizations on this page share the same filter
+            controls."""
+            df_f = render_year_quarter_month_filter(base_df, key_prefix, date_col='date') \
+                if 'date' in base_df.columns else base_df.copy()
+            if 'category' in df_f.columns:
+                cats = sorted(df_f['category'].dropna().unique().tolist())
+                sel_cat = st.selectbox("Category", ['All'] + cats, key=f'{key_prefix}_cat')
+                if sel_cat != 'All':
+                    df_f = df_f[df_f['category'] == sel_cat]
+            if show_reason and 'waste_reason' in df_f.columns:
+                reasons = sorted(df_f['waste_reason'].dropna().unique().tolist())
+                sel_reason = st.selectbox("Waste Reason", ['All'] + reasons, key=f'{key_prefix}_reason')
+                if sel_reason != 'All':
+                    df_f = df_f[df_f['waste_reason'] == sel_reason]
             return df_f
 
         # ── Waste Summary (KPIs) — its own filter ───────────────────────────
@@ -2355,67 +2332,84 @@ elif page == 'Menu Performance':
             for cat in ['Coffee Based','Kôfē Frappé','Mini Bites','Sans Coffee','Signature Kôfē']:
                 sf[f'cat_{cat}'] = (sf['category'] == cat).astype(int)
 
-            spoil_model    = spoil_bundle['model']
-            spoil_features = [f for f in spoil_bundle['features'] if f in sf.columns]
-            if not spoil_features:
-                st.info("Spoilage model features unavailable — retrain the model to see this chart.")
-            else:
-                X_spoil = sf[spoil_features].fillna(0)
-                spoil_preds = spoil_model.predict(X_spoil)
-                spoil_label_map = {0:'Low', 1:'Medium', 2:'High'}
-                sf['Alert Level'] = [spoil_label_map.get(int(p), str(p)) for p in spoil_preds]
-                ALERT_COLORS2 = {'Low': EARTH['success'], 'Medium': EARTH['warning'], 'High': EARTH['danger']}
-
-                alert_cat = (
-                    sf.groupby(['category','Alert Level'])
-                    .size().reset_index(name='Count')
-                )
-                fig = px.bar(
-                    alert_cat, x='category', y='Count',
-                    color='Alert Level',
-                    color_discrete_map=ALERT_COLORS2,
-                    barmode='stack',
-                    text_auto=True,
-                    category_orders={'Alert Level': ['Low','Medium','High']}
-                )
-                fig.update_layout(
-                    plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                    xaxis_title='Category', yaxis_title='Number of Records',
-                    legend=dict(orientation='h', y=1.1),
-                    margin=dict(l=0,r=0,t=30,b=0)
-                )
-                st.plotly_chart(fig, use_container_width=True)
-
-                overall_alert_counts = sf['Alert Level'].value_counts().reindex(['Low','Medium','High']).fillna(0)
-                overall_alert_html = full_breakdown_html(
-                    list(zip(overall_alert_counts.index, overall_alert_counts.values)), decimals=0
-                )
-                high_by_cat = sf[sf['Alert Level'] == 'High'].groupby('category').size()
-                if len(high_by_cat) > 0:
-                    top_alert_cat   = high_by_cat.idxmax()
-                    top_alert_count = int(high_by_cat.max())
-                    high_by_cat_html = full_breakdown_html(
-                        list(high_by_cat.sort_values(ascending=False).items()), decimals=0, show_pct=False
-                    )
-                    st.markdown(f"""
-                    <div style='background:#FFF8F3;border-left:4px solid #6F4E37;
-                                padding:16px 20px;border-radius:8px;margin-top:8px'>
-                        <b>Alert Level overall:</b> {overall_alert_html}.<br/>
-                        <b>High Alert by category:</b> {high_by_cat_html}.<br/>
-                        <b>{top_alert_cat}</b> has the most High Alert items (<b>{top_alert_count} records</b>).
-                        Immediately review ingredient freshness and storage for this category.
-                        Consider adjusting order frequency to reduce spoilage risk.
-                    </div>
-                    """, unsafe_allow_html=True)
+                spoil_model    = spoil_bundle['model']
+                spoil_features = [f for f in spoil_bundle['features'] if f in sf.columns]
+                if not spoil_features:
+                    st.info("Spoilage model features unavailable — retrain the model to see this chart.")
                 else:
-                    st.markdown(f"""
-                    <div style='background:#F0EDE2;border-left:4px solid #6B8E4E;
-                                padding:16px 20px;border-radius:8px;margin-top:8px'>
-                        <b>Alert Level overall:</b> {overall_alert_html}.<br/>
-                        <b>Good news!</b> No High Alert items detected.
-                        Current ingredient management is working well.
-                    </div>
-                    """, unsafe_allow_html=True)
+                    X_spoil = sf[spoil_features].fillna(0)
+                    spoil_preds = spoil_model.predict(X_spoil)
+                    spoil_label_map = {0:'Low', 1:'Medium', 2:'High'}
+                    sf['Alert Level'] = [spoil_label_map.get(int(p), str(p)) for p in spoil_preds]
+                    ALERT_COLORS2 = {'Low': EARTH['success'], 'Medium': EARTH['warning'], 'High': EARTH['danger']}
+                    alert_levels_order = ['Low', 'Medium', 'High']
+
+                    # Reindex to every (category, Alert Level) combination —
+                    # even ones with zero records — so Low/Medium/High all
+                    # show in the legend with their color, instead of Plotly
+                    # dropping a level from the legend entirely just because
+                    # no row happens to have it right now.
+                    all_cats_sp = sorted(sf['category'].dropna().unique().tolist())
+                    full_idx = pd.MultiIndex.from_product(
+                        [all_cats_sp, alert_levels_order], names=['category', 'Alert Level']
+                    )
+                    alert_cat = (
+                        sf.groupby(['category', 'Alert Level']).size()
+                        .reindex(full_idx, fill_value=0)
+                        .reset_index(name='Count')
+                    )
+                    fig = px.bar(
+                        alert_cat, x='category', y='Count',
+                        color='Alert Level',
+                        color_discrete_map=ALERT_COLORS2,
+                        barmode='stack',
+                        text_auto=True,
+                        category_orders={'Alert Level': alert_levels_order}
+                    )
+                    fig.update_layout(
+                        plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+                        xaxis_title='Category', yaxis_title='Number of Records',
+                        legend=dict(orientation='h', y=1.1),
+                        margin=dict(l=0,r=0,t=30,b=0)
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+
+                    # Per-category breakdown — one line per category showing
+                    # its own Low/Medium/High split, instead of one combined
+                    # "overall" figure that hides how each category differs.
+                    per_cat_lines = []
+                    for cat in all_cats_sp:
+                        cat_counts = (
+                            alert_cat[alert_cat['category'] == cat]
+                            .set_index('Alert Level')['Count']
+                            .reindex(alert_levels_order).fillna(0)
+                        )
+                        cat_html = full_breakdown_html(list(zip(cat_counts.index, cat_counts.values)), decimals=0)
+                        per_cat_lines.append(f"<b>{cat}</b> — {cat_html}")
+                    per_cat_html = "<br/>".join(per_cat_lines)
+
+                    high_by_cat = sf[sf['Alert Level'] == 'High'].groupby('category').size()
+                    if len(high_by_cat) > 0:
+                        top_alert_cat   = high_by_cat.idxmax()
+                        top_alert_count = int(high_by_cat.max())
+                        st.markdown(f"""
+                        <div style='background:#FFF8F3;border-left:4px solid #6F4E37;
+                                    padding:16px 20px;border-radius:8px;margin-top:8px'>
+                            <b>Alert Level by category:</b><br/>{per_cat_html}<br/><br/>
+                            <b>{top_alert_cat}</b> has the most High Alert items (<b>{top_alert_count} records</b>).
+                            Immediately review ingredient freshness and storage for this category.
+                            Consider adjusting order frequency to reduce spoilage risk.
+                        </div>
+                        """, unsafe_allow_html=True)
+                    else:
+                        st.markdown(f"""
+                        <div style='background:#F0EDE2;border-left:4px solid #6B8E4E;
+                                    padding:16px 20px;border-radius:8px;margin-top:8px'>
+                            <b>Alert Level by category:</b><br/>{per_cat_html}<br/><br/>
+                            <b>Good news!</b> No High Alert items detected.
+                            Current ingredient management is working well.
+                        </div>
+                        """, unsafe_allow_html=True)
 
 # ============================================================================
 # PAGE 5: INVENTORY STATUS — with Alert Level + Out of Stock
