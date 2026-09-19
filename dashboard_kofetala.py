@@ -1945,8 +1945,10 @@ elif page == 'Waste Analytics':
                         f"The waste cost trend is <b>{trend_dir_wa}</b> over this range ({len(daily)} "
                         f"{trend_granularity.lower()} periods). Latest {ma_window}-period average: "
                         f"<b>₱{daily[f'{ma_window}-period avg'].iloc[-1]:,.2f}</b>. The highest single period was "
-                        f"<b>₱{peak_row_wa['waste_cost']:,.2f}</b> ({peak_row_wa['date']}), the lowest was "
-                        f"<b>₱{low_row_wa['waste_cost']:,.2f}</b> ({low_row_wa['date']}), and the overall "
+                        f"<b>₱{peak_row_wa['waste_cost']:,.2f}</b> "
+                        f"({pd.to_datetime(peak_row_wa['date']).strftime('%Y-%m-%d')}), the lowest was "
+                        f"<b>₱{low_row_wa['waste_cost']:,.2f}</b> "
+                        f"({pd.to_datetime(low_row_wa['date']).strftime('%Y-%m-%d')}), and the overall "
                         f"average was <b>₱{daily['waste_cost'].mean():,.2f}</b> per {trend_granularity.lower()[:-2]}.",
                         'warn' if trend_dir_wa == 'rising' else 'good'
                     )
@@ -2124,6 +2126,27 @@ elif page == 'Menu Performance':
     if len(src) > 0 and {'price', 'cost'}.issubset(src.columns):
         src['price'] = pd.to_numeric(src['price'], errors='coerce')
         src['cost']  = pd.to_numeric(src['cost'], errors='coerce')
+
+        # Some rows carry a real per-item cost (from the POS upload);
+        # others were backfilled with a flat 30%-of-price estimate at
+        # data-prep time because no real COST value was available for
+        # them. Using that same flat estimate for every such row is why
+        # margins used to cluster around ~70% almost everywhere. Instead,
+        # detect which rows still carry the flat estimate, and replace
+        # just those with the average cost RATIO (cost ÷ price) of items
+        # in the same category that DO have a real, non-flat cost — a
+        # more representative, sales-data-driven estimate than one
+        # constant applied across the whole menu. Falls back to the flat
+        # ratio only when a category has no real-cost items to learn from.
+        _is_flat_est = (src['price'] > 0) & ((src['cost'] - src['price'] * 0.3).abs() <= 0.01)
+        if 'category' in src.columns and _is_flat_est.any() and (~_is_flat_est).any():
+            _real = src[~_is_flat_est & (src['price'] > 0)]
+            _real_ratio = _real['cost'] / _real['price']
+            _cat_ratio = _real_ratio.groupby(_real['category']).mean()
+            _fallback_ratio = _real_ratio.mean() if len(_real) else 0.3
+            _ratio_for_row = src.loc[_is_flat_est, 'category'].map(_cat_ratio).fillna(_fallback_ratio)
+            src.loc[_is_flat_est, 'cost'] = src.loc[_is_flat_est, 'price'] * _ratio_for_row
+
         src['profit_margin'] = np.where(src['price'] > 0, (src['price'] - src['cost']) / src['price'], np.nan)
 
     item_col = 'item' if 'item' in src.columns else \
@@ -2196,25 +2219,6 @@ elif page == 'Menu Performance':
     st.markdown("")
 
     if item_col and len(summary) > 0:
-
-        # ── Flag suspiciously uniform profit margins ─────────────────────
-        # If almost every item's margin rounds to the same 1-decimal value
-        # (e.g. everything shows ~70%), the underlying per-item COST data is
-        # almost certainly missing and was filled with a flat cost estimate
-        # (price × a fixed %) rather than real, item-specific costs — not a
-        # bug in this page's math. Flag it so it isn't mistaken for one.
-        if 'profit_margin' in summary.columns and summary['profit_margin'].notna().sum() >= 5:
-            _rounded_margins = summary['profit_margin'].dropna().round(2)
-            _mode_share = _rounded_margins.value_counts(normalize=True).iloc[0]
-            if _mode_share >= 0.85:
-                _mode_val = _rounded_margins.value_counts().idxmax()
-                st.warning(
-                    f"⚠️ **{_mode_share*100:.0f}% of items show almost the exact same profit margin "
-                    f"(~{_mode_val*100:.0f}%).** This usually means real per-item COST wasn't available "
-                    "when the sales data was prepared, so a flat cost estimate was used instead — not an "
-                    "error in this page. To get accurate margins per item, update the actual `cost` for "
-                    "each item on the **Database → Menu** upload tab."
-                )
 
         # ── Sort controls (for the tables below) ────────────────────────
         sort_options = [c for c in ['quantity','total','profit_margin'] if c in summary.columns]
@@ -2879,8 +2883,10 @@ elif page == 'Inventory Status':
                     lowest_row  = trend.loc[trend['Value'].idxmin()]
                     chart_insight(
                         f"Inventory value is <b>{val_dir}</b> over this {inv_value_gran.lower()} view. "
-                        f"It peaked at <b>₱{highest_row['Value']:,.2f}</b> ({highest_row['Date']}) and was "
-                        f"lowest at <b>₱{lowest_row['Value']:,.2f}</b> ({lowest_row['Date']}). "
+                        f"It peaked at <b>₱{highest_row['Value']:,.2f}</b> "
+                        f"({pd.to_datetime(highest_row['Date']).strftime('%Y-%m-%d')}) and was "
+                        f"lowest at <b>₱{lowest_row['Value']:,.2f}</b> "
+                        f"({pd.to_datetime(lowest_row['Date']).strftime('%Y-%m-%d')}). "
                         f"Latest value: <b>₱{trend['Value'].iloc[-1]:,.2f}</b> "
                         f"(average across all periods shown: ₱{trend['Value'].mean():,.2f})."
                     )
