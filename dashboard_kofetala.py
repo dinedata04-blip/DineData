@@ -3907,7 +3907,9 @@ elif page == 'Database':
                     new_sales = pd.read_csv(uploaded_sales)
                     new_sales['date'] = pd.to_datetime(new_sales['date'], errors='coerce')
                     st.markdown(f"#### Preview — {len(new_sales)} new records")
-                    st.dataframe(new_sales, use_container_width=True)
+                    _sales_preview = new_sales.copy()
+                    _sales_preview['date'] = _sales_preview['date'].dt.strftime('%Y-%m-%d')
+                    st.dataframe(_sales_preview, use_container_width=True)
                     render_data_quality_check(
                         new_sales, dupe_subset=['date','item','quantity','total'],
                         critical_cols=['date','item','category','quantity','price','total']
@@ -3980,7 +3982,9 @@ elif page == 'Database':
                     new_waste = pd.read_csv(uploaded_waste)
                     new_waste['date'] = pd.to_datetime(new_waste['date'], errors='coerce')
                     st.markdown(f"#### Preview — {len(new_waste)} new records")
-                    st.dataframe(new_waste, use_container_width=True)
+                    _waste_preview = new_waste.copy()
+                    _waste_preview['date'] = _waste_preview['date'].dt.strftime('%Y-%m-%d')
+                    st.dataframe(_waste_preview, use_container_width=True)
                     render_data_quality_check(
                         new_waste, dupe_subset=['date','item_name','quantity_wasted','waste_reason'],
                         critical_cols=['date','item_name','category','quantity_wasted','waste_reason','total_waste_cost']
