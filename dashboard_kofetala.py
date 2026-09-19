@@ -2385,84 +2385,84 @@ elif page == 'Menu Performance':
             for cat in ['Coffee Based','Kôfē Frappé','Mini Bites','Sans Coffee','Signature Kôfē']:
                 sf[f'cat_{cat}'] = (sf['category'] == cat).astype(int)
 
-                spoil_model    = spoil_bundle['model']
-                spoil_features = [f for f in spoil_bundle['features'] if f in sf.columns]
-                if not spoil_features:
-                    st.info("Spoilage model features unavailable — retrain the model to see this chart.")
+            spoil_model    = spoil_bundle['model']
+            spoil_features = [f for f in spoil_bundle['features'] if f in sf.columns]
+            if not spoil_features:
+                st.info("Spoilage model features unavailable — retrain the model to see this chart.")
+            else:
+                X_spoil = sf[spoil_features].fillna(0)
+                spoil_preds = spoil_model.predict(X_spoil)
+                spoil_label_map = {0:'Low', 1:'Medium', 2:'High'}
+                sf['Alert Level'] = [spoil_label_map.get(int(p), str(p)) for p in spoil_preds]
+                ALERT_COLORS2 = {'Low': EARTH['success'], 'Medium': EARTH['warning'], 'High': EARTH['danger']}
+                alert_levels_order = ['Low', 'Medium', 'High']
+
+                # Reindex to every (category, Alert Level) combination —
+                # even ones with zero records — so Low/Medium/High all
+                # show in the legend with their color, instead of Plotly
+                # dropping a level from the legend entirely just because
+                # no row happens to have it right now.
+                all_cats_sp = sorted(sf['category'].dropna().unique().tolist())
+                full_idx = pd.MultiIndex.from_product(
+                    [all_cats_sp, alert_levels_order], names=['category', 'Alert Level']
+                )
+                alert_cat = (
+                    sf.groupby(['category', 'Alert Level']).size()
+                    .reindex(full_idx, fill_value=0)
+                    .reset_index(name='Count')
+                )
+                fig = px.bar(
+                    alert_cat, x='category', y='Count',
+                    color='Alert Level',
+                    color_discrete_map=ALERT_COLORS2,
+                    barmode='stack',
+                    text_auto=True,
+                    category_orders={'Alert Level': alert_levels_order}
+                )
+                fig.update_layout(
+                    plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+                    xaxis_title='Category', yaxis_title='Number of Records',
+                    legend=dict(orientation='h', y=1.1),
+                    margin=dict(l=0,r=0,t=30,b=0)
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+                # Per-category breakdown — one line per category showing
+                # its own Low/Medium/High split, instead of one combined
+                # "overall" figure that hides how each category differs.
+                per_cat_lines = []
+                for cat in all_cats_sp:
+                    cat_counts = (
+                        alert_cat[alert_cat['category'] == cat]
+                        .set_index('Alert Level')['Count']
+                        .reindex(alert_levels_order).fillna(0)
+                    )
+                    cat_html = full_breakdown_html(list(zip(cat_counts.index, cat_counts.values)), decimals=0)
+                    per_cat_lines.append(f"<b>{cat}</b> — {cat_html}")
+                per_cat_html = "<br/>".join(per_cat_lines)
+
+                high_by_cat = sf[sf['Alert Level'] == 'High'].groupby('category').size()
+                if len(high_by_cat) > 0:
+                    top_alert_cat   = high_by_cat.idxmax()
+                    top_alert_count = int(high_by_cat.max())
+                    st.markdown(f"""
+                    <div style='background:#FFF8F3;border-left:4px solid #6F4E37;
+                                padding:16px 20px;border-radius:8px;margin-top:8px'>
+                        <b>Alert Level by category:</b><br/>{per_cat_html}<br/><br/>
+                        <b>{top_alert_cat}</b> has the most High Alert items (<b>{top_alert_count} records</b>).
+                        Immediately review ingredient freshness and storage for this category.
+                        Consider adjusting order frequency to reduce spoilage risk.
+                    </div>
+                    """, unsafe_allow_html=True)
                 else:
-                    X_spoil = sf[spoil_features].fillna(0)
-                    spoil_preds = spoil_model.predict(X_spoil)
-                    spoil_label_map = {0:'Low', 1:'Medium', 2:'High'}
-                    sf['Alert Level'] = [spoil_label_map.get(int(p), str(p)) for p in spoil_preds]
-                    ALERT_COLORS2 = {'Low': EARTH['success'], 'Medium': EARTH['warning'], 'High': EARTH['danger']}
-                    alert_levels_order = ['Low', 'Medium', 'High']
-
-                    # Reindex to every (category, Alert Level) combination —
-                    # even ones with zero records — so Low/Medium/High all
-                    # show in the legend with their color, instead of Plotly
-                    # dropping a level from the legend entirely just because
-                    # no row happens to have it right now.
-                    all_cats_sp = sorted(sf['category'].dropna().unique().tolist())
-                    full_idx = pd.MultiIndex.from_product(
-                        [all_cats_sp, alert_levels_order], names=['category', 'Alert Level']
-                    )
-                    alert_cat = (
-                        sf.groupby(['category', 'Alert Level']).size()
-                        .reindex(full_idx, fill_value=0)
-                        .reset_index(name='Count')
-                    )
-                    fig = px.bar(
-                        alert_cat, x='category', y='Count',
-                        color='Alert Level',
-                        color_discrete_map=ALERT_COLORS2,
-                        barmode='stack',
-                        text_auto=True,
-                        category_orders={'Alert Level': alert_levels_order}
-                    )
-                    fig.update_layout(
-                        plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                        xaxis_title='Category', yaxis_title='Number of Records',
-                        legend=dict(orientation='h', y=1.1),
-                        margin=dict(l=0,r=0,t=30,b=0)
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-
-                    # Per-category breakdown — one line per category showing
-                    # its own Low/Medium/High split, instead of one combined
-                    # "overall" figure that hides how each category differs.
-                    per_cat_lines = []
-                    for cat in all_cats_sp:
-                        cat_counts = (
-                            alert_cat[alert_cat['category'] == cat]
-                            .set_index('Alert Level')['Count']
-                            .reindex(alert_levels_order).fillna(0)
-                        )
-                        cat_html = full_breakdown_html(list(zip(cat_counts.index, cat_counts.values)), decimals=0)
-                        per_cat_lines.append(f"<b>{cat}</b> — {cat_html}")
-                    per_cat_html = "<br/>".join(per_cat_lines)
-
-                    high_by_cat = sf[sf['Alert Level'] == 'High'].groupby('category').size()
-                    if len(high_by_cat) > 0:
-                        top_alert_cat   = high_by_cat.idxmax()
-                        top_alert_count = int(high_by_cat.max())
-                        st.markdown(f"""
-                        <div style='background:#FFF8F3;border-left:4px solid #6F4E37;
-                                    padding:16px 20px;border-radius:8px;margin-top:8px'>
-                            <b>Alert Level by category:</b><br/>{per_cat_html}<br/><br/>
-                            <b>{top_alert_cat}</b> has the most High Alert items (<b>{top_alert_count} records</b>).
-                            Immediately review ingredient freshness and storage for this category.
-                            Consider adjusting order frequency to reduce spoilage risk.
-                        </div>
-                        """, unsafe_allow_html=True)
-                    else:
-                        st.markdown(f"""
-                        <div style='background:#F0EDE2;border-left:4px solid #6B8E4E;
-                                    padding:16px 20px;border-radius:8px;margin-top:8px'>
-                            <b>Alert Level by category:</b><br/>{per_cat_html}<br/><br/>
-                            <b>Good news!</b> No High Alert items detected.
-                            Current ingredient management is working well.
-                        </div>
-                        """, unsafe_allow_html=True)
+                    st.markdown(f"""
+                    <div style='background:#F0EDE2;border-left:4px solid #6B8E4E;
+                                padding:16px 20px;border-radius:8px;margin-top:8px'>
+                        <b>Alert Level by category:</b><br/>{per_cat_html}<br/><br/>
+                        <b>Good news!</b> No High Alert items detected.
+                        Current ingredient management is working well.
+                    </div>
+                    """, unsafe_allow_html=True)
 
 # ============================================================================
 # PAGE 5: INVENTORY STATUS — with Alert Level + Out of Stock
