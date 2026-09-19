@@ -2130,18 +2130,39 @@ elif page == 'Menu Performance':
         src['price'] = pd.to_numeric(src['price'], errors='coerce')
         src['cost']  = pd.to_numeric(src['cost'], errors='coerce')
 
-        # Some rows carry a real per-item cost (from the POS upload);
-        # others were backfilled with a flat 30%-of-price estimate at
-        # data-prep time because no real COST value was available for
-        # them. Using that same flat estimate for every such row is why
-        # margins used to cluster around ~70% almost everywhere. Instead,
-        # detect which rows still carry the flat estimate, and replace
-        # just those with the average cost RATIO (cost ÷ price) of items
-        # in the same category that DO have a real, non-flat cost — a
-        # more representative, sales-data-driven estimate than one
-        # constant applied across the whole menu. Falls back to the flat
-        # ratio only when a category has no real-cost items to learn from.
-        _is_flat_est = (src['price'] > 0) & ((src['cost'] - src['price'] * 0.3).abs() <= 0.01)
+        # Prefer the REAL per-item cost from the Menu table (DIM_ITEM /
+        # menu_df, kept current via Database → Menu uploads) over each
+        # individual sale's own 'cost' value. A sale's cost is written once,
+        # at the moment that transaction was recorded, and for items with no
+        # real COST at upload time it was filled with a flat 30%-of-price
+        # estimate that stays wrong forever — updating the menu later never
+        # retroactively fixes it. Matching is done on a lowercased/stripped
+        # item name, same as everywhere else in the app.
+        _item_name_col = 'item_name' if 'item_name' in src.columns else \
+                          'item' if 'item' in src.columns else None
+        _menu_matched = pd.Series(False, index=src.index)
+        if _item_name_col and menu_df is not None and len(menu_df) > 0 and \
+           {'item_name', 'cost'}.issubset(menu_df.columns):
+            _menu_ref = menu_df.copy()
+            _menu_ref['_key'] = _menu_ref['item_name'].astype(str).str.strip().str.lower()
+            _menu_ref['cost'] = pd.to_numeric(_menu_ref['cost'], errors='coerce')
+            _menu_cost_by_key = (
+                _menu_ref.dropna(subset=['cost'])
+                         .drop_duplicates('_key', keep='last')
+                         .set_index('_key')['cost']
+            )
+            _src_key = src[_item_name_col].astype(str).str.strip().str.lower()
+            _matched_cost = _src_key.map(_menu_cost_by_key)
+            _menu_matched = _matched_cost.notna()
+            src.loc[_menu_matched, 'cost'] = _matched_cost[_menu_matched]
+
+        # For any item with no Menu match, fall back to the average cost
+        # RATIO (cost ÷ price) of items in the same category that DO have a
+        # real, non-flat cost — more representative than one constant
+        # applied across the whole menu. Falls back to the flat ratio only
+        # when a category has no real-cost items to learn from either.
+        _is_flat_est = (~_menu_matched) & (src['price'] > 0) & \
+                        ((src['cost'] - src['price'] * 0.3).abs() <= 0.01)
         if 'category' in src.columns and _is_flat_est.any() and (~_is_flat_est).any():
             _real = src[~_is_flat_est & (src['price'] > 0)]
             _real_ratio = _real['cost'] / _real['price']
