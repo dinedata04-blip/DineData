@@ -2285,17 +2285,13 @@ elif page == 'Menu Performance':
 
     if item_col and len(summary) > 0:
 
-        # ── Sort controls (for the tables below) ────────────────────────
+        # Tables below are sorted by revenue (highest first) — fixed, no
+        # separate control since it didn't visibly change anything in the
+        # chart above it and just added clutter.
         sort_options = [c for c in ['quantity','total','profit_margin'] if c in summary.columns]
-        scol1, scol2 = st.columns(2)
-        with scol1:
-            sort_by  = st.selectbox("Sort by", sort_options if sort_options else [item_col], key='mp_sort_by')
-        with scol2:
-            sort_dir = st.selectbox("Order", ['Descending','Ascending'], key='mp_sort_dir')
-
-        ascending = sort_dir == 'Ascending'
+        sort_by = 'total' if 'total' in sort_options else (sort_options[0] if sort_options else item_col)
         if sort_by in summary.columns:
-            summary = summary.sort_values(sort_by, ascending=ascending)
+            summary = summary.sort_values(sort_by, ascending=False)
 
         if 'menu_performance' in summary.columns:
             with st.container(border=True):
