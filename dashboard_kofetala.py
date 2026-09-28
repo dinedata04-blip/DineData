@@ -899,6 +899,132 @@ def insert_inventory_records_to_db(new_inv_df):
     load_inventory_from_db.clear()
     return inserted
 
+# ============================================================================
+# AUTHENTICATION + AUDIT LOG
+# Two roles: Owner (full access, manages staff accounts, reads the audit
+# log) and Staff (day-to-day use). Every login, upload, edit, and delete is
+# written to an append-only AUDIT_LOG table recording WHO did it, WHEN, and
+# WHAT was affected. Stored in its own SQLite file inside the persistent
+# Database/ folder so it survives redeploys and is never touched by the
+# data-deletion tools on the Database page.
+# ============================================================================
+import hashlib, secrets, hmac
+from datetime import timezone, timedelta
+
+AUTH_DB_PATH = os.path.join(DATABASE_DIR, 'dinedata_auth.db')
+PH_TZ = timezone(timedelta(hours=8))          # Philippine Standard Time
+DEFAULT_OWNER_USER = os.environ.get('DINEDATA_OWNER_USER', 'owner')
+DEFAULT_OWNER_PASS = os.environ.get('DINEDATA_OWNER_PASS', 'owner123')
+MAX_LOGIN_ATTEMPTS = 5
+
+def _auth_conn():
+    os.makedirs(DATABASE_DIR, exist_ok=True)
+    conn = sqlite3.connect(AUTH_DB_PATH, check_same_thread=False)
+    conn.execute("""CREATE TABLE IF NOT EXISTS USERS (
+        username TEXT PRIMARY KEY, full_name TEXT, role TEXT NOT NULL,
+        salt TEXT NOT NULL, pw_hash TEXT NOT NULL, active INTEGER DEFAULT 1,
+        created_at TEXT, created_by TEXT)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS AUDIT_LOG (
+        log_id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT NOT NULL,
+        username TEXT, role TEXT, action TEXT NOT NULL, table_name TEXT,
+        records_affected INTEGER, detail TEXT)""")
+    return conn
+
+def _hash_pw(password, salt):
+    return hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), bytes.fromhex(salt), 120_000).hex()
+
+def _now_ph():
+    return datetime.now(PH_TZ).strftime('%Y-%m-%d %H:%M:%S')
+
+def create_user(username, full_name, role, password, created_by='system'):
+    salt = secrets.token_hex(16)
+    conn = _auth_conn()
+    conn.execute("INSERT INTO USERS (username, full_name, role, salt, pw_hash, active, created_at, created_by) "
+                 "VALUES (?,?,?,?,?,1,?,?)",
+                 (username.strip().lower(), full_name.strip(), role, salt, _hash_pw(password, salt), _now_ph(), created_by))
+    conn.commit(); conn.close()
+
+def verify_login(username, password):
+    conn = _auth_conn()
+    row = conn.execute("SELECT username, full_name, role, salt, pw_hash, active FROM USERS WHERE username=?",
+                       (username.strip().lower(),)).fetchone()
+    conn.close()
+    if not row or not row[5]:
+        return None
+    if hmac.compare_digest(_hash_pw(password, row[3]), row[4]):
+        return {'username': row[0], 'full_name': row[1], 'role': row[2]}
+    return None
+
+def log_audit(action, table_name=None, records=None, detail=None, user=None, role=None):
+    """Append one row to AUDIT_LOG. Never raises — a logging problem must not
+    block the user's action, but it is surfaced as a warning."""
+    try:
+        user = user or st.session_state.get('auth_user', 'unknown')
+        role = role or st.session_state.get('auth_role', 'unknown')
+        conn = _auth_conn()
+        conn.execute("INSERT INTO AUDIT_LOG (timestamp, username, role, action, table_name, records_affected, detail) "
+                     "VALUES (?,?,?,?,?,?,?)",
+                     (_now_ph(), user, role, action, table_name,
+                      None if records is None else int(records), (detail or '')[:1000]))
+        conn.commit(); conn.close()
+    except Exception as e:
+        st.warning(f"Audit log could not be written: {e}")
+
+def rows_summary(df, cols, limit=5):
+    """Short human-readable list of the rows about to be deleted, for the audit detail."""
+    try:
+        parts = [" ".join(str(r.get(c, '')) for c in cols).strip() for _, r in df.head(limit).iterrows()]
+        more = f" (+{len(df) - limit} more)" if len(df) > limit else ""
+        return "; ".join(parts) + more
+    except Exception:
+        return ""
+
+# Seed the first Owner account on first run
+try:
+    _c = _auth_conn()
+    if _c.execute("SELECT COUNT(*) FROM USERS").fetchone()[0] == 0:
+        _c.close()
+        create_user(DEFAULT_OWNER_USER, 'Owner', 'Owner', DEFAULT_OWNER_PASS, created_by='system')
+    else:
+        _c.close()
+except Exception as _e:
+    st.error(f"Could not initialise the user database: {_e}")
+    st.stop()
+
+# ── Login gate ──────────────────────────────────────────────────────────────
+if not st.session_state.get('auth_user'):
+    st.session_state.setdefault('login_failures', 0)
+    _l, _m, _r = st.columns([1, 1.2, 1])
+    with _m:
+        st.markdown("<div style='text-align:center;margin-top:60px'>"
+                    "<h1 style='margin-bottom:0'>DineData</h1>"
+                    "<p style='color:#8A7968'>Kôfētala Bistro — please sign in</p></div>", unsafe_allow_html=True)
+        with st.container(border=True):
+            if st.session_state.login_failures >= MAX_LOGIN_ATTEMPTS:
+                st.error("Too many failed attempts. Refresh the page to try again.")
+            else:
+                with st.form("login_form"):
+                    _u = st.text_input("Username")
+                    _p = st.text_input("Password", type="password")
+                    _go = st.form_submit_button("Sign in", use_container_width=True)
+                if _go:
+                    _acct = verify_login(_u, _p)
+                    if _acct:
+                        st.session_state.auth_user = _acct['username']
+                        st.session_state.auth_name = _acct['full_name']
+                        st.session_state.auth_role = _acct['role']
+                        st.session_state.login_failures = 0
+                        st.session_state.default_pw_in_use = (
+                            _acct['username'] == DEFAULT_OWNER_USER and _p == DEFAULT_OWNER_PASS)
+                        log_audit('LOGIN', detail='Signed in')
+                        st.rerun()
+                    else:
+                        st.session_state.login_failures += 1
+                        log_audit('LOGIN_FAILED', detail=f"Failed sign-in for username '{_u.strip()[:40]}'",
+                                  user=_u.strip()[:40] or 'unknown', role='n/a')
+                        st.error("Incorrect username or password.")
+    st.stop()
+
 # ── Load all data and models — database first, CSV fallback ────────────────
 if db_available():
     sales_df     = load_sales_from_db()
@@ -946,6 +1072,9 @@ with st.sidebar:
         'Database',
     ]
 
+    if st.session_state.get('auth_role') == 'Owner':
+        NAV_ITEMS += ['User Management', 'Audit Log']
+
     if 'page' not in st.session_state:
         st.session_state.page = NAV_ITEMS[0]
 
@@ -960,6 +1089,35 @@ with st.sidebar:
             st.rerun()
 
     page = st.session_state.page
+
+    st.markdown('<div class="sidebar-section-label">Signed in</div>', unsafe_allow_html=True)
+    st.markdown(f"<div style='padding:0 4px 6px 4px;font-size:13.5px'><b>{st.session_state.get('auth_name','')}</b><br>"
+                f"<span style='color:#B8A896'>{st.session_state.get('auth_role','')} · @{st.session_state.get('auth_user','')}</span></div>",
+                unsafe_allow_html=True)
+    if st.session_state.get('default_pw_in_use'):
+        st.warning("You are using the default password. Please change it below.")
+    with st.expander("Change my password"):
+        _old = st.text_input("Current password", type="password", key="pw_old")
+        _new = st.text_input("New password (min. 8 characters)", type="password", key="pw_new")
+        if st.button("Update password", key="pw_update"):
+            if verify_login(st.session_state.auth_user, _old) is None:
+                st.error("Current password is incorrect.")
+            elif len(_new) < 8:
+                st.error("New password must be at least 8 characters.")
+            else:
+                _salt = secrets.token_hex(16)
+                _c = _auth_conn()
+                _c.execute("UPDATE USERS SET salt=?, pw_hash=? WHERE username=?",
+                           (_salt, _hash_pw(_new, _salt), st.session_state.auth_user))
+                _c.commit(); _c.close()
+                st.session_state.default_pw_in_use = False
+                log_audit('PASSWORD_CHANGED', 'USERS', 1, 'Changed own password')
+                st.success("Password updated.")
+    if st.button("Log out", key="logout_btn", use_container_width=True):
+        log_audit('LOGOUT', detail='Signed out')
+        for _k in ('auth_user', 'auth_name', 'auth_role', 'default_pw_in_use'):
+            st.session_state.pop(_k, None)
+        st.rerun()
 
     st.markdown('<div class="sidebar-section-label">Data Status</div>', unsafe_allow_html=True)
     status_rows = ""
@@ -2285,13 +2443,17 @@ elif page == 'Menu Performance':
 
     if item_col and len(summary) > 0:
 
-        # Tables below are sorted by revenue (highest first) — fixed, no
-        # separate control since it didn't visibly change anything in the
-        # chart above it and just added clutter.
+        # ── Sort controls (for the tables below) ────────────────────────
         sort_options = [c for c in ['quantity','total','profit_margin'] if c in summary.columns]
-        sort_by = 'total' if 'total' in sort_options else (sort_options[0] if sort_options else item_col)
+        scol1, scol2 = st.columns(2)
+        with scol1:
+            sort_by  = st.selectbox("Sort by", sort_options if sort_options else [item_col], key='mp_sort_by')
+        with scol2:
+            sort_dir = st.selectbox("Order", ['Descending','Ascending'], key='mp_sort_dir')
+
+        ascending = sort_dir == 'Ascending'
         if sort_by in summary.columns:
-            summary = summary.sort_values(sort_by, ascending=False)
+            summary = summary.sort_values(sort_by, ascending=ascending)
 
         if 'menu_performance' in summary.columns:
             with st.container(border=True):
@@ -3936,6 +4098,7 @@ elif page == 'Database':
                         dupes_msg = f" ({dupes_removed} duplicates removed)" if dupes_removed > 0 else " No duplicates found."
                         db_msg    = f" {db_inserted} records also saved to database." if db_inserted > 0 else ""
                         st.session_state['sales_upload_msg'] = f"Added {len(new_sales)} records!{dupes_msg}{db_msg}"
+                        log_audit('UPLOAD', 'Sales', len(new_sales), f'Uploaded sales CSV; {dupes_removed} duplicate(s) removed')
                         st.cache_data.clear()
                         st.rerun()
                 except Exception as e:
@@ -4010,6 +4173,7 @@ elif page == 'Database':
                         dupes_msg = f" ({dupes_removed} duplicates removed)" if dupes_removed > 0 else " No duplicates found."
                         db_msg    = f" {db_inserted} records also saved to database." if db_inserted > 0 else ""
                         st.session_state['waste_upload_msg'] = f"Added {len(new_waste)} records!{dupes_msg}{db_msg}"
+                        log_audit('UPLOAD', 'Waste', len(new_waste), f'Uploaded waste CSV; {dupes_removed} duplicate(s) removed')
                         st.cache_data.clear()
                         st.rerun()
                 except Exception as e:
@@ -4070,6 +4234,7 @@ elif page == 'Database':
 
                         db_msg = f" {db_inserted} item(s) also saved to database." if db_inserted > 0 else ""
                         st.session_state['menu_upload_msg'] = f"Added/updated {len(new_menu)} menu item(s)!{db_msg}"
+                        log_audit('UPLOAD', 'Menu', len(new_menu), 'Uploaded menu CSV (new items added / existing items updated)')
                         st.cache_data.clear()
                         st.rerun()
                 except Exception as e:
@@ -4146,6 +4311,7 @@ elif page == 'Database':
                         dupes_msg_inv = f" ({dupes_removed_inv} duplicates removed)" if dupes_removed_inv > 0 else " No duplicates found."
                         db_msg_inv    = f" {n_inv_inserted} record(s) also saved to database." if n_inv_inserted > 0 else ""
                         st.session_state['inv_upload_msg'] = f"Added {len(new_inv)} records to inventory!{dupes_msg_inv}{db_msg_inv}"
+                        log_audit('UPLOAD', 'Inventory', len(new_inv), f'Uploaded inventory CSV; {dupes_removed_inv} duplicate(s) removed')
                         st.cache_data.clear()
                         st.rerun()
                 except Exception as e:
@@ -4272,6 +4438,7 @@ elif page == 'Database':
                                          row.get('Cost'), row.get('Date'), row.get('Item'), row.get('Revenue'))
                                     )
                                 conn.commit()
+                                log_audit('EDIT', 'Sales', len(edited_s), 'Saved edits to sales records in the table view')
                                 st.success("Changes saved successfully!")
                             except Exception as e:
                                 st.error(f"Could not save: {e}")
@@ -4323,6 +4490,7 @@ elif page == 'Database':
                                         )
                                         conn.execute(del_sql_s)
                                         conn.commit()
+                                        log_audit('DELETE', 'Sales', frozen_count_s, 'Bulk delete by filter: ' + (frozen_sql_s or 'NO FILTER (all records)'))
                                         st.session_state['s_confirm_del'] = False
                                         st.success(f"Deleted {frozen_count_s:,} records successfully!")
                                         st.cache_data.clear()
@@ -4373,6 +4541,7 @@ elif page == 'Database':
                                         (row.get('Date'), row.get('Item'), row.get('Revenue'))
                                     )
                                 conn.commit()
+                                log_audit('DELETE', 'Sales', len(selected_rows_s), 'Selected rows: ' + rows_summary(selected_rows_s, ['Date','Item']))
                                 st.success(f"Deleted {len(selected_rows_s)} record(s)!")
                                 st.cache_data.clear()
                                 st.rerun()
@@ -4466,6 +4635,7 @@ elif page == 'Database':
                                          row.get('Item'), row.get('Waste Reason'))
                                     )
                                 conn.commit()
+                                log_audit('EDIT', 'Waste', len(edited_w), 'Saved edits to waste records in the table view')
                                 st.success("Changes saved successfully!")
                             except Exception as e:
                                 st.error(f"Could not save: {e}")
@@ -4531,6 +4701,7 @@ elif page == 'Database':
                                         )
                                         conn.execute(del_sql)
                                         conn.commit()
+                                        log_audit('DELETE', 'Waste', frozen_count, 'Bulk delete by filter: ' + (frozen_sql or 'NO FILTER (all records)'))
                                         st.session_state['w_confirm_del'] = False
                                         st.success(f"Deleted {frozen_count:,} records successfully!")
                                         st.cache_data.clear()
@@ -4582,6 +4753,7 @@ elif page == 'Database':
                                         (row.get('Date'), row.get('Item'), row.get('Waste Reason'))
                                     )
                                 conn.commit()
+                                log_audit('DELETE', 'Waste', len(selected_rows), 'Selected rows: ' + rows_summary(selected_rows, ['Date','Item']))
                                 st.success(f"Deleted {len(selected_rows)} record(s)!")
                                 st.cache_data.clear()
                                 st.rerun()
@@ -4684,6 +4856,7 @@ elif page == 'Database':
                                          row.get('Purchase Date'), row.get('Ingredient'))
                                     )
                                 conn.commit()
+                                log_audit('EDIT', 'Inventory', len(edited_i), 'Saved edits to inventory records in the table view')
                                 st.success("Changes saved successfully!")
                             except Exception as e:
                                 st.error(f"Could not save: {e}")
@@ -4735,6 +4908,7 @@ elif page == 'Database':
                                             f"{frozen_sql_i})"
                                         )
                                         conn.commit()
+                                        log_audit('DELETE', 'Inventory', frozen_count_i, 'Bulk delete by filter: ' + (frozen_sql_i or 'NO FILTER (all records)'))
                                         st.session_state['i_confirm_del'] = False
                                         st.success(f"Deleted {frozen_count_i:,} records successfully!")
                                         st.cache_data.clear()
@@ -4785,6 +4959,7 @@ elif page == 'Database':
                                         (row.get('Purchase Date'), row.get('Ingredient'))
                                     )
                                 conn.commit()
+                                log_audit('DELETE', 'Inventory', len(sel_inv_rows), 'Selected rows: ' + rows_summary(sel_inv_rows, ['Purchase Date','Ingredient']))
                                 st.success(f"Deleted {len(sel_inv_rows)} record(s)!")
                                 st.cache_data.clear()
                                 st.rerun()
@@ -4827,6 +5002,7 @@ elif page == 'Database':
                                         (price, cost, margin, row.get('Item'))
                                     )
                                 conn.commit()
+                                log_audit('EDIT', 'Menu', len(edited_menu), 'Saved price/cost edits to menu items')
                                 st.success("Changes saved successfully!")
                                 st.cache_data.clear()
                             except Exception as e:
@@ -4856,6 +5032,7 @@ elif page == 'Database':
                                     try:
                                         conn.execute("DELETE FROM DIM_ITEM")
                                         conn.commit()
+                                        log_audit('DELETE', 'Menu', frozen_count_menu, 'Deleted ALL menu items')
                                         st.session_state['menu_confirm_del'] = False
                                         st.success(f"Deleted {frozen_count_menu:,} menu items successfully!")
                                         st.cache_data.clear()
@@ -4902,6 +5079,7 @@ elif page == 'Database':
                                 for _, row in selected_menu_rows.iterrows():
                                     conn.execute("DELETE FROM DIM_ITEM WHERE item_name=?", (row.get('Item'),))
                                 conn.commit()
+                                log_audit('DELETE', 'Menu', len(selected_menu_rows), 'Selected items: ' + rows_summary(selected_menu_rows, ['Item']))
                                 st.success(f"Deleted {len(selected_menu_rows)} item(s)!")
                                 st.cache_data.clear()
                                 st.rerun()
@@ -4911,3 +5089,128 @@ elif page == 'Database':
                     st.error(f"Could not load menu items: {e}")
 
         conn.close()
+
+# ============================================================================
+# PAGE: USER MANAGEMENT (Owner only)
+# ============================================================================
+elif page == 'User Management':
+
+    if st.session_state.get('auth_role') != 'Owner':
+        st.error("Only the Owner can manage user accounts.")
+        st.stop()
+
+    hero_banner("Access Control", "User Management",
+                "Create staff accounts, deactivate users who no longer need access, and reset passwords.")
+
+    with st.container(border=True):
+        st.markdown("### Add a User")
+        with st.form("add_user_form", clear_on_submit=True):
+            c1, c2 = st.columns(2)
+            with c1:
+                nu_user = st.text_input("Username")
+                nu_name = st.text_input("Full name")
+            with c2:
+                nu_role = st.selectbox("Role", ['Staff', 'Owner'])
+                nu_pw = st.text_input("Temporary password (min. 8 characters)", type="password")
+            if st.form_submit_button("Create user", type="primary"):
+                if not nu_user.strip() or not nu_name.strip():
+                    st.error("Username and full name are required.")
+                elif len(nu_pw) < 8:
+                    st.error("Password must be at least 8 characters.")
+                else:
+                    try:
+                        create_user(nu_user, nu_name, nu_role, nu_pw, created_by=st.session_state.auth_user)
+                        log_audit('USER_CREATED', 'USERS', 1, f"Created {nu_role} account '{nu_user.strip().lower()}'")
+                        st.success(f"Created {nu_role} account '{nu_user.strip().lower()}'.")
+                    except sqlite3.IntegrityError:
+                        st.error("That username already exists.")
+
+    st.markdown("")
+    with st.container(border=True):
+        st.markdown("### Existing Users")
+        _c = _auth_conn()
+        users_df = pd.read_sql("SELECT username AS Username, full_name AS [Full name], role AS Role, "
+                               "CASE active WHEN 1 THEN 'Active' ELSE 'Deactivated' END AS Status, "
+                               "created_at AS [Created], created_by AS [Created by] FROM USERS ORDER BY role, username", _c)
+        _c.close()
+        st.dataframe(users_df, use_container_width=True, hide_index=True)
+
+        st.markdown("#### Manage an account")
+        others = [u for u in users_df['Username'] if u != st.session_state.auth_user]
+        if not others:
+            st.caption("No other accounts yet.")
+        else:
+            m1, m2 = st.columns(2)
+            with m1:
+                target = st.selectbox("Account", others, key='um_target')
+                tgt_status = users_df.loc[users_df['Username'] == target, 'Status'].iloc[0]
+                if st.button("Deactivate" if tgt_status == 'Active' else "Reactivate", key='um_toggle'):
+                    _c = _auth_conn()
+                    _c.execute("UPDATE USERS SET active=? WHERE username=?", (0 if tgt_status == 'Active' else 1, target))
+                    _c.commit(); _c.close()
+                    log_audit('USER_DEACTIVATED' if tgt_status == 'Active' else 'USER_REACTIVATED', 'USERS', 1, f"Account '{target}'")
+                    st.rerun()
+            with m2:
+                new_pw = st.text_input("New temporary password (min. 8 characters)", type="password", key='um_newpw')
+                if st.button("Reset password", key='um_reset'):
+                    if len(new_pw) < 8:
+                        st.error("Password must be at least 8 characters.")
+                    else:
+                        _s = secrets.token_hex(16)
+                        _c = _auth_conn()
+                        _c.execute("UPDATE USERS SET salt=?, pw_hash=? WHERE username=?", (_s, _hash_pw(new_pw, _s), target))
+                        _c.commit(); _c.close()
+                        log_audit('PASSWORD_RESET', 'USERS', 1, f"Reset password for '{target}'")
+                        st.success(f"Password reset for '{target}'.")
+
+# ============================================================================
+# PAGE: AUDIT LOG (Owner only) — read-only history of who did what
+# ============================================================================
+elif page == 'Audit Log':
+
+    if st.session_state.get('auth_role') != 'Owner':
+        st.error("Only the Owner can view the audit log.")
+        st.stop()
+
+    hero_banner("Accountability", "Audit Log",
+                "A read-only history of every login, upload, edit, and deletion — who did it, when, and to which records.")
+
+    _c = _auth_conn()
+    log_df = pd.read_sql("SELECT timestamp AS [Date & time], username AS [User], role AS [Role], action AS [Action], "
+                         "table_name AS [Data], records_affected AS [Records], detail AS [Details] "
+                         "FROM AUDIT_LOG ORDER BY log_id DESC", _c)
+    _c.close()
+
+    if len(log_df) == 0:
+        st.info("No activity has been recorded yet.")
+    else:
+        log_df['_ts'] = pd.to_datetime(log_df['Date & time'], errors='coerce')
+        k1, k2, k3, k4 = st.columns(4)
+        with k1: stat_card("Total events", f"{len(log_df):,}")
+        with k2: stat_card("Deletions", f"{int((log_df['Action'] == 'DELETE').sum()):,}")
+        with k3: stat_card("Records deleted", f"{int(log_df.loc[log_df['Action'] == 'DELETE', 'Records'].fillna(0).sum()):,}")
+        with k4: stat_card("Failed logins", f"{int((log_df['Action'] == 'LOGIN_FAILED').sum()):,}")
+        st.markdown("")
+
+        with st.container(border=True):
+            st.markdown("#### Filter")
+            f1, f2, f3 = st.columns(3)
+            with f1:
+                f_action = st.selectbox("Action", ['All'] + sorted(log_df['Action'].unique().tolist()), key='al_action')
+            with f2:
+                f_user = st.selectbox("User", ['All'] + sorted(log_df['User'].dropna().unique().tolist()), key='al_user')
+            with f3:
+                _min, _max = log_df['_ts'].min().date(), log_df['_ts'].max().date()
+                f_range = st.date_input("Date range", value=(_min, _max), min_value=_min, max_value=_max, key='al_range')
+
+            view = log_df.copy()
+            if f_action != 'All': view = view[view['Action'] == f_action]
+            if f_user != 'All':   view = view[view['User'] == f_user]
+            if isinstance(f_range, tuple) and len(f_range) == 2:
+                view = view[(view['_ts'].dt.date >= f_range[0]) & (view['_ts'].dt.date <= f_range[1])]
+            view = view.drop(columns=['_ts'])
+
+            st.caption(f"Showing **{len(view):,}** of {len(log_df):,} events (newest first). Entries cannot be edited or deleted from the app.")
+            st.dataframe(view, use_container_width=True, hide_index=True)
+            st.download_button("Download audit log as CSV", data=view.to_csv(index=False).encode('utf-8'),
+                               file_name="dinedata_audit_log.csv", mime="text/csv")
