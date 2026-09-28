@@ -991,6 +991,52 @@ except Exception as _e:
     st.error(f"Could not initialise the user database: {_e}")
     st.stop()
 
+# ── One-time owner recovery (controlled by an environment variable) ──
+if os.environ.get('DINEDATA_RESET_OWNER') == '1':
+    _c = _auth_conn()
+    _salt = secrets.token_hex(16)
+    _row = _c.execute("SELECT 1 FROM USERS WHERE username=?", (DEFAULT_OWNER_USER,)).fetchone()
+    if _row:
+        _c.execute("UPDATE USERS SET salt=?, pw_hash=?, active=1, role='Owner' WHERE username=?",
+                   (_salt, _hash_pw(DEFAULT_OWNER_PASS, _salt), DEFAULT_OWNER_USER))
+        _c.commit(); _c.close()
+    else:
+        _c.close()
+        create_user(DEFAULT_OWNER_USER, 'Owner', 'Owner', DEFAULT_OWNER_PASS, created_by='recovery')
+
+# ── Login gate ──────────────────────────────────────────────────────────────
+if not st.session_state.get('auth_user'):
+    st.session_state.setdefault('login_failures', 0)
+    _l, _m, _r = st.columns([1, 1.2, 1])
+    with _m:
+        st.markdown("<div style='text-align:center;margin-top:60px'>"
+                    "<h1 style='margin-bottom:0'>DineData</h1>"
+                    "<p style='color:#8A7968'>Kôfētala Bistro — please sign in</p></div>", unsafe_allow_html=True)
+        with st.container(border=True):
+            if st.session_state.login_failures >= MAX_LOGIN_ATTEMPTS:
+                st.error("Too many failed attempts. Refresh the page to try again.")
+            else:
+                with st.form("login_form"):
+                    _u = st.text_input("Username")
+                    _p = st.text_input("Password", type="password")
+                    _go = st.form_submit_button("Sign in", use_container_width=True)
+                if _go:
+                    _acct = verify_login(_u, _p)
+                    if _acct:
+                        st.session_state.auth_user = _acct['username']
+                        st.session_state.auth_name = _acct['full_name']
+                        st.session_state.auth_role = _acct['role']
+                        st.session_state.login_failures = 0
+                        st.session_state.default_pw_in_use = (
+                            _acct['username'] == DEFAULT_OWNER_USER and _p == DEFAULT_OWNER_PASS)
+                        log_audit('LOGIN', detail='Signed in')
+                        st.rerun()
+                    else:
+                        st.session_state.login_failures += 1
+                        log_audit('LOGIN_FAILED', detail=f"Failed sign-in for username '{_u.strip()[:40]}'",
+                                  user=_u.strip()[:40] or 'unknown', role='n/a')
+                        st.error("Incorrect username or password.")
+    st.stop()
 # ── Login gate ──────────────────────────────────────────────────────────────
 if not st.session_state.get('auth_user'):
     st.session_state.setdefault('login_failures', 0)
