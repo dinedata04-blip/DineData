@@ -68,6 +68,19 @@ EARTH = {
 # Plotly color sequence for charts — all earth tones
 CHART_COLORS = ['#6F4E37','#A0826D','#D2691E','#C4A882','#8B5E3C','#5D4037','#BCAAA4']
 
+# ── Charts fit narrow screens: let axis labels reserve their own space and
+# hide the hover toolbar (it crowds small touch screens).
+_orig_plotly_chart = st.plotly_chart
+def _responsive_plotly_chart(fig, *args, **kwargs):
+    try:
+        fig.update_xaxes(automargin=True)
+        fig.update_yaxes(automargin=True)
+    except Exception:
+        pass
+    kwargs.setdefault('config', {'displayModeBar': False})
+    return _orig_plotly_chart(fig, *args, **kwargs)
+st.plotly_chart = _responsive_plotly_chart
+
 st.markdown(f'''
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600;9..144,700;9..144,800&display=swap');
@@ -270,6 +283,48 @@ h4 {{ color: {EARTH["dark"]}; font-weight: 600; }}
 @keyframes coffee-frames {{
     from {{ background-position: 0 0; }}
     to   {{ background-position: -110px 0; }}
+}}
+
+/* -- Mobile / small screens ------------------------------------------- */
+@media (max-width: 640px) {{
+    .block-container {{ padding: 1rem 0.8rem 3rem 0.8rem !important; }}
+    h1 {{ font-size: 1.6rem !important; }}
+    h2 {{ font-size: 1.35rem !important; }}
+    h3 {{ font-size: 1.15rem !important; }}
+    h4 {{ font-size: 1.05rem !important; }}
+
+    /* Hero banner: smaller and without the decorative circle */
+    .hero-banner {{ padding: 18px 18px; border-radius: 14px; margin-bottom: 16px; }}
+    .hero-banner::after {{ display: none; }}
+    .hero-title {{ font-size: 20px; }}
+    .hero-sub {{ font-size: 13px; }}
+    .hero-eyebrow {{ font-size: 12px; }}
+
+    /* KPI cards: allow text to wrap instead of being cut off */
+    .stat-card {{ padding: 12px 14px; min-height: 84px; }}
+    .stat-label {{ font-size: 10.5px; white-space: normal; }}
+    .stat-value {{ font-size: 18px; white-space: normal; word-break: break-word; }}
+    .stat-row {{ flex-wrap: wrap; }}
+    .stat-delta-note {{ white-space: normal; }}
+
+    /* KPI cards sit two per row instead of one long column */
+    div[data-testid="stHorizontalBlock"] {{ flex-wrap: wrap; gap: 0.6rem; }}
+    div[data-testid="column"]:has(.stat-card),
+    div[data-testid="stColumn"]:has(.stat-card) {{
+        flex: 1 1 calc(50% - 0.6rem) !important;
+        min-width: calc(50% - 0.6rem) !important;
+    }}
+
+    /* Tabs scroll sideways rather than wrapping or overflowing */
+    [data-baseweb="tab-list"] {{ overflow-x: auto; flex-wrap: nowrap; }}
+    [data-baseweb="tab"] {{ white-space: nowrap; padding-left: 10px; padding-right: 10px; }}
+
+    /* Easier to tap; 16px inputs stop iOS from zooming in on focus */
+    .stButton > button, .stDownloadButton > button {{ width: 100%; min-height: 44px; }}
+    input, textarea, select {{ font-size: 16px !important; }}
+
+    /* Insight / recommendation boxes: tighter padding */
+    div[style*="border-left:4px solid"] {{ padding: 12px 14px !important; }}
 }}
 </style>
 ''', unsafe_allow_html=True)
@@ -3828,11 +3883,13 @@ elif page == 'Forecast & Predictions':
                 mime="text/csv", key=f'{key_prefix}_download'
             )
 
-    # Kept to the two forecasts that drive waste reduction: how much waste
-    # to expect, and how much product will be demanded (so prep matches it).
+    # Kept to the forecasts that matter most: how much waste to expect, how
+    # much product will be demanded (so prep matches it), and sales revenue.
     _render_forecast_metric('Waste Cost', 'waste', 'fc_wastecost')
     st.markdown("")
     _render_forecast_metric('Product Demand (units)', 'sales', 'fc_demand')
+    st.markdown("")
+    _render_forecast_metric('Sales Revenue', 'sales', 'fc_salesrev')
 
 # ============================================================================
 # PAGE 5: IMPORT DATA
