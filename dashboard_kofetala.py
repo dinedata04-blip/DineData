@@ -989,11 +989,11 @@ def insert_inventory_records_to_db(new_inv_df):
 # ============================================================================
 # AUTHENTICATION + AUDIT LOG
 # Two roles: Owner (full access, manages staff accounts, reads the audit
-# log) and Staff (day-to-day use). Every login, upload, edit, and delete is
+# log) and Staff (day-to-day use). Every login, upload, edit, archive, and restore is
 # written to an append-only AUDIT_LOG table recording WHO did it, WHEN, and
 # WHAT was affected. Stored in its own SQLite file inside the persistent
 # Database/ folder so it survives redeploys and is never touched by the
-# data-deletion tools on the Import Data page.
+# archive tools on the Import Data page.
 # ============================================================================
 import hashlib, secrets, hmac
 from datetime import timezone, timedelta
@@ -1058,7 +1058,7 @@ def log_audit(action, table_name=None, records=None, detail=None, user=None, rol
         st.warning(f"Audit log could not be written: {e}")
 
 def rows_summary(df, cols, limit=5):
-    """Short human-readable list of the rows about to be deleted, for the audit detail."""
+    """Short human-readable list of the rows about to be archived, for the audit detail."""
     try:
         parts = [" ".join(str(r.get(c, '')) for c in cols).strip() for _, r in df.head(limit).iterrows()]
         more = f" (+{len(df) - limit} more)" if len(df) > limit else ""
@@ -4572,7 +4572,7 @@ elif page == 'Admin':
 
     with _t1:
         hero_banner("Accountability", "Audit Log",
-                    "A read-only history of every login, upload, edit, and deletion — who did it, when, and to which records.")
+                    "A read-only history of every login, upload, edit, archive, and restore — who did it, when, and to which records.")
 
         _c = _auth_conn()
         log_df = pd.read_sql("SELECT timestamp AS [Date & time], username AS [User], role AS [Role], action AS [Action], "
@@ -4586,8 +4586,8 @@ elif page == 'Admin':
             log_df['_ts'] = pd.to_datetime(log_df['Date & time'], errors='coerce')
             k1, k2, k3, k4 = st.columns(4)
             with k1: stat_card("Total events", f"{len(log_df):,}")
-            with k2: stat_card("Deletions", f"{int((log_df['Action'] == 'DELETE').sum()):,}")
-            with k3: stat_card("Records deleted", f"{int(log_df.loc[log_df['Action'] == 'DELETE', 'Records'].fillna(0).sum()):,}")
+            with k2: stat_card("Archived", f"{int((log_df['Action'] == 'ARCHIVE').sum()):,}")
+            with k3: stat_card("Records archived", f"{int(log_df.loc[log_df['Action'] == 'ARCHIVE', 'Records'].fillna(0).sum()):,}")
             with k4: stat_card("Failed logins", f"{int((log_df['Action'] == 'LOGIN_FAILED').sum()):,}")
             st.markdown("")
 
