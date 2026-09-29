@@ -77,7 +77,10 @@ def build_schema(conn):
         category       TEXT,
         price          REAL,
         cost           REAL,
-        profit_margin  REAL
+        profit_margin  REAL,
+        is_archived    INTEGER DEFAULT 0,
+        archived_at    TEXT,
+        archived_by    TEXT
     );
 
     CREATE TABLE DIM_INGREDIENT (
@@ -109,6 +112,9 @@ def build_schema(conn):
         price          REAL,
         total          REAL,
         cost           REAL,
+        is_archived    INTEGER DEFAULT 0,
+        archived_at    TEXT,
+        archived_by    TEXT,
         FOREIGN KEY (date_key) REFERENCES DIM_DATE(date_key),
         FOREIGN KEY (item_key) REFERENCES DIM_ITEM(item_key)
     );
@@ -121,6 +127,9 @@ def build_schema(conn):
         quantity_wasted REAL,
         cost_per_item   REAL,
         total_waste_cost REAL,
+        is_archived     INTEGER DEFAULT 0,
+        archived_at     TEXT,
+        archived_by     TEXT,
         FOREIGN KEY (date_key) REFERENCES DIM_DATE(date_key),
         FOREIGN KEY (item_key) REFERENCES DIM_ITEM(item_key),
         FOREIGN KEY (reason_key) REFERENCES DIM_WASTE_REASON(reason_key)
@@ -137,6 +146,9 @@ def build_schema(conn):
         expiration_date TEXT,
         shelf_life_days INTEGER,
         days_until_expiration INTEGER,
+        is_archived     INTEGER DEFAULT 0,
+        archived_at     TEXT,
+        archived_by     TEXT,
         FOREIGN KEY (date_key) REFERENCES DIM_DATE(date_key),
         FOREIGN KEY (ingredient_key) REFERENCES DIM_INGREDIENT(ingredient_key),
         FOREIGN KEY (alert_key) REFERENCES DIM_ALERT_LEVEL(alert_key)
