@@ -1131,18 +1131,16 @@ with st.sidebar:
 
     NAV_ITEMS = [
         'Dashboard Overview',
-        'Sales Analytics',
-        'Waste Analytics',
-        'Menu Performance',
-        'Inventory Status',
+        'Sales & Menu',
+        'Waste & Inventory',
         'Forecast & Predictions',
         'Import Data',
     ]
 
     if st.session_state.get('auth_role') == 'Owner':
-        NAV_ITEMS += ['User Management', 'Audit Log']
+        NAV_ITEMS += ['Admin']
 
-    if 'page' not in st.session_state:
+    if st.session_state.get('page') not in NAV_ITEMS:
         st.session_state.page = NAV_ITEMS[0]
 
     st.markdown('<div class="sidebar-section-label">Navigate</div>', unsafe_allow_html=True)
@@ -1350,24 +1348,10 @@ if page == 'Dashboard Overview':
     with col4:
         stat_card("Menu · Items", f"{len(overview_menu):,}")
 
-    col5, col6, col7, col8 = st.columns(4)
-    with col5:
-        stat_card("Sales · Records", f"{len(overview_sales):,}")
-    with col6:
-        total_units_wasted = overview_waste['quantity_wasted'].sum() if 'quantity_wasted' in overview_waste.columns else 0
-        stat_card("Waste · Units Wasted", f"{int(total_units_wasted):,}")
-    with col7:
-        oos = int((overview_inv['quantity'] <= 0).sum()) if 'quantity' in overview_inv.columns else 0
-        stat_card("Inventory · Out of Stock", f"{oos:,}")
-    with col8:
-        n_cats_menu = overview_menu['category'].nunique() if 'category' in overview_menu.columns else 0
-        stat_card("Menu · Categories", f"{n_cats_menu:,}")
-
     st.markdown("")
     st.markdown("### Snapshots")
     st.caption(
-        "One quick chart per area — open **Sales Analytics**, **Waste Analytics**, "
-        "**Inventory Status**, or **Menu Performance** in the sidebar for the full breakdown and filters."
+        "One quick chart per area — open **Sales & Menu** or **Waste & Inventory** in the sidebar for the full breakdown and filters."
     )
 
     # ============================================================================
@@ -1401,7 +1385,7 @@ if page == 'Dashboard Overview':
                         f"Monthly revenue is <b>{sales_dir}</b>. Latest month "
                         f"({sm_rev.iloc[-1]['Month'].strftime('%B %Y')}) recorded "
                         f"<b>₱{sm_rev.iloc[-1]['Revenue']:,.2f}</b> in revenue. "
-                        f"See <b>Sales Analytics</b> for the full breakdown.",
+                        f"See <b>Sales &amp; Menu</b> for the full breakdown.",
                         'good' if sales_dir == 'growing' else 'warn'
                     )
                 elif len(sm_rev) == 1:
@@ -1409,7 +1393,7 @@ if page == 'Dashboard Overview':
                         f"Only one month of data in this selection: "
                         f"<b>{sm_rev.iloc[0]['Month'].strftime('%B %Y')}</b> recorded "
                         f"<b>₱{sm_rev.iloc[0]['Revenue']:,.2f}</b> in revenue. "
-                        f"See <b>Sales Analytics</b> for the full breakdown."
+                        f"See <b>Sales &amp; Menu</b> for the full breakdown."
                     )
         else:
             st.info("No sales data yet. Go to the Import Data page to upload your sales log.")
@@ -1516,7 +1500,7 @@ if page == 'Dashboard Overview':
                     chart_insight(
                         f"Waste cost is <b>{_direction}</b> over time. The most recent {_period_word} "
                         f"({_lbl}) recorded <b>₱{latest_p['Waste Cost']:,.2f}</b> in waste. "
-                        f"See <b>Waste Analytics</b> for category and item-level breakdowns.",
+                        f"See <b>Waste &amp; Inventory</b> for category and item-level breakdowns.",
                         'warn' if _direction == 'increasing' else 'good'
                     )
         else:
@@ -1571,7 +1555,7 @@ if page == 'Dashboard Overview':
                 urgent_ct = int(dist_inv.loc[dist_inv['Alert Level'].isin(['High Alert','Out of Stock']), 'Count'].sum())
                 chart_insight(
                     f"<b>{urgent_ct}</b> ingredient record(s) in this selection are High Alert or Out of Stock. "
-                    f"See <b>Inventory Status</b> for the full restock guide.",
+                    f"See <b>Waste &amp; Inventory</b> for the full restock guide.",
                     'warn' if urgent_ct > 0 else 'good'
                 )
         else:
@@ -1579,431 +1563,384 @@ if page == 'Dashboard Overview':
 
     st.markdown("")
 
-    # ============================================================================
-    # MENU SNAPSHOT
-    # ============================================================================
-    with st.container(border=True):
-        st.markdown("#### Menu Snapshot")
-        # Menu items (DIM_ITEM) don't carry a date, so the date filter here
-        # runs on the sales log instead — showing which menu categories
-        # actually sold within the selected period.
-        if len(overview_sales) > 0 and 'category' in overview_sales.columns and 'date' in overview_sales.columns:
-            menu_sales_f = render_year_quarter_month_filter(overview_sales, 'ov_menu', date_col='date')
-            if len(menu_sales_f) == 0 or 'total' not in menu_sales_f.columns:
-                st.info("No sales records for this selection.")
-            else:
-                menu_cat_dist = menu_sales_f.groupby('category')['total'].sum().reset_index()
-                menu_cat_dist.columns = ['Category', 'Revenue']
-                fig = px.bar(menu_cat_dist.sort_values('Revenue', ascending=False),
-                             x='Category', y='Revenue',
-                             color_discrete_sequence=[EARTH['secondary']], text_auto=',.0f')
-                fig.update_layout(
-                    plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                    yaxis=dict(tickprefix='₱', tickformat=',.0f'),
-                    margin=dict(l=0, r=0, t=10, b=0)
-                )
-                st.plotly_chart(fig, use_container_width=True)
-
-                top_cat_menu = menu_cat_dist.sort_values('Revenue', ascending=False).iloc[0]
-                n_menu_items = len(overview_menu) if len(overview_menu) > 0 else 0
-                chart_insight(
-                    f"<b>{top_cat_menu['Category']}</b> generated the most revenue in this period "
-                    f"(₱{top_cat_menu['Revenue']:,.2f}). Your menu has <b>{n_menu_items}</b> items total. "
-                    f"See <b>Menu Performance</b> for Keep/Improve/Reconsider recommendations."
-                )
-        elif len(overview_menu) > 0 and 'category' in overview_menu.columns:
-            menu_cat_dist = overview_menu['category'].value_counts().reset_index()
-            menu_cat_dist.columns = ['Category', 'Items']
-            fig = px.bar(menu_cat_dist, x='Category', y='Items',
-                         color_discrete_sequence=[EARTH['secondary']], text_auto=True)
-            fig.update_layout(
-                plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                margin=dict(l=0, r=0, t=10, b=0)
-            )
-            st.plotly_chart(fig, use_container_width=True)
-            st.caption("No dated sales records available yet, so this shows item counts by category instead of revenue.")
-
-            top_cat_menu = menu_cat_dist.sort_values('Items', ascending=False).iloc[0]
-            chart_insight(
-                f"<b>{len(overview_menu)}</b> menu items across <b>{len(menu_cat_dist)}</b> categories. "
-                f"<b>{top_cat_menu['Category']}</b> has the most items ({int(top_cat_menu['Items'])}). "
-                f"See <b>Menu Performance</b> for Keep/Improve/Reconsider recommendations."
-            )
-        else:
-            st.info("No menu data yet. Go to the Import Data page to upload your menu items.")
 
 # ============================================================================
-# PAGE 2: SALES ANALYTICS
+# PAGE 2: SALES & MENU (Sales Analytics + Menu Performance as tabs)
 # ============================================================================
 
-elif page == 'Sales Analytics':
+elif page == 'Sales & Menu':
 
-    st.title("Sales Analytics")
-    st.caption("To add new sales records, go to the **Import Data** page — all data uploads now happen there.")
+    st.title("Sales & Menu")
+    _t0, _t1 = st.tabs(["Sales", "Menu Performance"])
 
-    def _sa_apply_filters(base_df, key_prefix):
-        """Renders its own Year/Quarter/Month filter row (Month options
-        cascade off the chosen Quarter) and returns the filtered
-        dataframe — kept local to each chart so no two visualizations on
-        this page share the same filter controls."""
-        return render_year_quarter_month_filter(base_df, key_prefix, date_col='date')
+    with _t0:
+        st.caption("To add new sales records, go to the **Import Data** page — all data uploads now happen there.")
 
-    # ── Business Summary — boxed and filterable, uniform with the Waste
-    # Summary box on Waste Analytics and the Performance Distribution box
-    # on Menu Performance. This absorbs what used to be a separate
-    # "Transaction KPIs" section further down the page, so the headline
-    # numbers for Sales Analytics all live together at the top now.
-    with st.container(border=True):
-        st.markdown("### Business Summary")
-        kpi_src = _sa_apply_filters(sales_df, 'sa_summary')
-        st.caption(f"Showing **{len(kpi_src):,}** of {len(sales_df):,} records")
+        def _sa_apply_filters(base_df, key_prefix):
+            """Renders its own Year/Quarter/Month filter row (Month options
+            cascade off the chosen Quarter) and returns the filtered
+            dataframe — kept local to each chart so no two visualizations on
+            this page share the same filter controls."""
+            return render_year_quarter_month_filter(base_df, key_prefix, date_col='date')
 
-        bcol1, bcol2, bcol3, bcol4, bcol5 = st.columns(5)
-        with bcol1:
-            stat_card("Total Transactions", f"{len(kpi_src):,}")
-        with bcol2:
-            rev = kpi_src['total'].sum() if 'total' in kpi_src.columns else 0
-            stat_card("Total Revenue", f"₱{rev:,.2f}")
-        with bcol3:
-            qty = kpi_src['quantity'].sum() if 'quantity' in kpi_src.columns else 0
-            stat_card("Units Sold", f"{qty:,.0f}")
-        with bcol4:
-            avg = kpi_src['total'].mean() if 'total' in kpi_src.columns else 0
-            stat_card("Avg Transaction", f"₱{avg:,.2f}")
-        with bcol5:
-            # Count total menu items from the menu master list
-            n_menu = len(menu_df) if menu_df is not None else 0
-            stat_card("Menu Items", n_menu)
+        # ── Business Summary — boxed and filterable, uniform with the Waste
+        # Summary box on Waste Analytics and the Performance Distribution box
+        # on Menu Performance. This absorbs what used to be a separate
+        # "Transaction KPIs" section further down the page, so the headline
+        # numbers for Sales Analytics all live together at the top now.
+        with st.container(border=True):
+            st.markdown("### Business Summary")
+            kpi_src = _sa_apply_filters(sales_df, 'sa_summary')
+            st.caption(f"Showing **{len(kpi_src):,}** of {len(sales_df):,} records")
 
-    st.markdown("")
-    st.markdown("### Sales Overview")
+            bcol1, bcol2, bcol3, bcol4, bcol5 = st.columns(5)
+            with bcol1:
+                stat_card("Total Transactions", f"{len(kpi_src):,}")
+            with bcol2:
+                rev = kpi_src['total'].sum() if 'total' in kpi_src.columns else 0
+                stat_card("Total Revenue", f"₱{rev:,.2f}")
+            with bcol3:
+                qty = kpi_src['quantity'].sum() if 'quantity' in kpi_src.columns else 0
+                stat_card("Units Sold", f"{qty:,.0f}")
+            with bcol4:
+                avg = kpi_src['total'].mean() if 'total' in kpi_src.columns else 0
+                stat_card("Avg Transaction", f"₱{avg:,.2f}")
+            with bcol5:
+                # Count total menu items from the menu master list
+                n_menu = len(menu_df) if menu_df is not None else 0
+                stat_card("Menu Items", n_menu)
 
-    st.markdown("")
+        st.markdown("")
+        st.markdown("### Sales Overview")
 
-    with st.container(border=True):
-        st.markdown("#### Revenue by Category")
-        cat_rev_src = _sa_apply_filters(sales_df, 'sa_catrev')
-        cat_col = 'category' if 'category' in cat_rev_src.columns else None
-        if cat_col and 'total' in cat_rev_src.columns and len(cat_rev_src) > 0:
-            cat_rev = cat_rev_src.groupby(cat_col)['total'].sum().reset_index()
-            fig = px.pie(cat_rev, values='total', names=cat_col,
-                         hole=0.45,
-                         color_discrete_sequence=CHART_COLORS)
-            fig.update_traces(textposition='outside', textinfo='percent+label')
-            fig.update_layout(
-                showlegend=True, margin=dict(l=0, r=0, t=10, b=0),
-                paper_bgcolor='rgba(0,0,0,0)'
-            )
-            st.plotly_chart(fig, use_container_width=True)
+        st.markdown("")
 
-            if len(cat_rev) > 0:
-                cat_rev_sorted = cat_rev.sort_values('total', ascending=False)
-                cat_rev_breakdown = full_breakdown_html(
-                    list(zip(cat_rev_sorted[cat_col], cat_rev_sorted['total'])), prefix='₱'
-                )
-                chart_insight(
-                    f"Revenue by category — {cat_rev_breakdown}. "
-                    f"<b>{cat_rev_sorted.iloc[0][cat_col]}</b> is your top revenue category."
-                )
-        else:
-            st.info("No sales records for this filter combination.")
+        with st.container(border=True):
+            st.markdown("#### Performance by Day of Week")
+            dow_metric = st.selectbox("Metric", ['Revenue', 'Transactions'], key='sa_dow_metric')
+            dow_src = _sa_apply_filters(sales_df, 'sa_dow')
+            if 'date' in dow_src.columns and len(dow_src) > 0:
+                day_order = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']
+                fc = dow_src.copy()
+                fc['day'] = fc['date'].dt.day_name()
 
-    st.markdown("")
-
-    with st.container(border=True):
-        st.markdown("#### Performance by Day of Week")
-        dow_metric = st.selectbox("Metric", ['Revenue', 'Transactions'], key='sa_dow_metric')
-        dow_src = _sa_apply_filters(sales_df, 'sa_dow')
-        if 'date' in dow_src.columns and len(dow_src) > 0:
-            day_order = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']
-            fc = dow_src.copy()
-            fc['day'] = fc['date'].dt.day_name()
-
-            if dow_metric == 'Revenue' and 'total' in fc.columns:
-                dow_tbl = fc.groupby('day')['total'].sum().reindex(day_order).reset_index()
-                dow_tbl.columns = ['day', 'value']
-                y_label, y_prefix, text_fmt = 'Revenue (₱)', '₱', '.2s'
-            else:
-                dow_tbl = fc['day'].value_counts().reindex(day_order).reset_index()
-                dow_tbl.columns = ['day', 'value']
-                y_label, y_prefix, text_fmt = 'Transactions', '', True
-
-            if dow_tbl['value'].notna().any():
-                max_day = dow_tbl['value'].idxmax()
-                colors  = [EARTH['primary'] if i == max_day else EARTH['light']
-                           for i in range(len(dow_tbl))]
-                fig = px.bar(dow_tbl, x='day', y='value',
-                             color_discrete_sequence=[EARTH['primary']],
-                             text_auto=text_fmt)
-                fig.update_traces(marker_color=colors)
-                fig.update_layout(
-                    plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                    yaxis=dict(tickprefix=y_prefix, tickformat=',.0f'),
-                    xaxis_title='', yaxis_title=y_label,
-                    margin=dict(l=0, r=0, t=10, b=0)
-                )
-                st.plotly_chart(fig, use_container_width=True)
-
-                dow_sorted = dow_tbl.dropna(subset=['value']).sort_values('value', ascending=False)
-                if dow_metric == 'Revenue':
-                    dow_breakdown = full_breakdown_html(
-                        list(zip(dow_sorted['day'], dow_sorted['value'])), prefix='₱'
-                    )
-                    chart_insight(
-                        f"Revenue by day of week — {dow_breakdown}. "
-                        f"<b>{dow_sorted.iloc[0]['day']}</b> generates the most revenue — "
-                        f"consider extra staffing or promos on this day."
-                    )
+                if dow_metric == 'Revenue' and 'total' in fc.columns:
+                    dow_tbl = fc.groupby('day')['total'].sum().reindex(day_order).reset_index()
+                    dow_tbl.columns = ['day', 'value']
+                    y_label, y_prefix, text_fmt = 'Revenue (₱)', '₱', '.2s'
                 else:
-                    dow_breakdown = full_breakdown_html(
-                        list(zip(dow_sorted['day'], dow_sorted['value'])), suffix=' transactions', decimals=0, show_pct=False
+                    dow_tbl = fc['day'].value_counts().reindex(day_order).reset_index()
+                    dow_tbl.columns = ['day', 'value']
+                    y_label, y_prefix, text_fmt = 'Transactions', '', True
+
+                if dow_tbl['value'].notna().any():
+                    max_day = dow_tbl['value'].idxmax()
+                    colors  = [EARTH['primary'] if i == max_day else EARTH['light']
+                               for i in range(len(dow_tbl))]
+                    fig = px.bar(dow_tbl, x='day', y='value',
+                                 color_discrete_sequence=[EARTH['primary']],
+                                 text_auto=text_fmt)
+                    fig.update_traces(marker_color=colors)
+                    fig.update_layout(
+                        plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+                        yaxis=dict(tickprefix=y_prefix, tickformat=',.0f'),
+                        xaxis_title='', yaxis_title=y_label,
+                        margin=dict(l=0, r=0, t=10, b=0)
                     )
-                    chart_insight(
-                        f"Transactions by day — {dow_breakdown}. "
-                        f"<b>{dow_sorted.iloc[0]['day']}</b> is the busiest day."
-                    )
+                    st.plotly_chart(fig, use_container_width=True)
+
+                    dow_sorted = dow_tbl.dropna(subset=['value']).sort_values('value', ascending=False)
+                    if dow_metric == 'Revenue':
+                        dow_breakdown = full_breakdown_html(
+                            list(zip(dow_sorted['day'], dow_sorted['value'])), prefix='₱'
+                        )
+                        chart_insight(
+                            f"Revenue by day of week — {dow_breakdown}. "
+                            f"<b>{dow_sorted.iloc[0]['day']}</b> generates the most revenue — "
+                            f"consider extra staffing or promos on this day."
+                        )
+                    else:
+                        dow_breakdown = full_breakdown_html(
+                            list(zip(dow_sorted['day'], dow_sorted['value'])), suffix=' transactions', decimals=0, show_pct=False
+                        )
+                        chart_insight(
+                            f"Transactions by day — {dow_breakdown}. "
+                            f"<b>{dow_sorted.iloc[0]['day']}</b> is the busiest day."
+                        )
+                else:
+                    st.info("No sales data for this filter combination.")
             else:
                 st.info("No sales data for this filter combination.")
-        else:
-            st.info("No sales data for this filter combination.")
 
-    st.markdown("")
+        st.markdown("")
 
-    with st.container(border=True):
-        st.markdown("#### Sales Heatmap (Hour × Day)")
-        if 'date' in sales_df.columns and len(sales_df) > 0:
-            hm = render_year_quarter_month_filter(sales_df, 'sales_heatmap', date_col='date')
-            hm['hour'] = hm['date'].dt.hour
-            hm['day']  = hm['date'].dt.day_name()
-            day_order2 = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']
-            pivot = hm.groupby(['day','hour']).size().unstack(fill_value=0)
-            pivot = pivot.reindex([d for d in day_order2 if d in pivot.index])
-            if len(pivot) == 0:
-                st.info("No sales records for this selection.")
-            else:
-                fig = px.imshow(pivot,
-                                color_continuous_scale=['#FAF6F1','#C4A882','#6F4E37'],
-                                aspect='auto',
-                                labels=dict(x='Hour of Day', y='Day', color='Transactions'))
-                fig.update_layout(
-                    margin=dict(l=0, r=0, t=10, b=0),
-                    paper_bgcolor='rgba(0,0,0,0)'
-                )
-                st.plotly_chart(fig, use_container_width=True)
-
-                if pivot.values.sum() > 0:
-                    by_day_totals = pivot.sum(axis=1).sort_values(ascending=False)
-                    busiest_day_sa = by_day_totals.index[0]
-                    busiest_hour = pivot.sum(axis=0).idxmax()
-                    day_txn_breakdown = full_breakdown_html(
-                        list(by_day_totals.items()), suffix=' transactions', decimals=0, show_pct=False
-                    )
-                    chart_insight(
-                        f"Transactions by day — {day_txn_breakdown}. "
-                        f"<b>{busiest_day_sa}</b> is the busiest day overall, and "
-                        f"<b>{busiest_hour}:00</b> is the busiest hour across the week. "
-                        f"Darker cells mark your peak traffic windows."
-                    )
-
-    st.markdown("---")
-
-    # Transaction KPIs now live in the boxed "Business Summary" section at
-    # the top of this page (see above) instead of here.
-    item_col = 'item' if 'item' in sales_df.columns else \
-               'item_name' if 'item_name' in sales_df.columns else None
-
-    # Horizontal bar — top 15 items — own filter
-    with st.container(border=True):
-        st.markdown("#### Top 15 Items by Quantity")
-        top15_src = _sa_apply_filters(sales_df, 'sa_top15')
-        if item_col and 'quantity' in top15_src.columns and len(top15_src) > 0:
-            top15_src['quantity'] = pd.to_numeric(top15_src['quantity'], errors='coerce')
-            top15_src, top15_item_disp, _ = add_normalized_keys(top15_src, item_col=item_col)
-            top = top15_src.groupby('_item_key')['quantity'].sum().nlargest(15).reset_index()
-            top[item_col] = top['_item_key'].map(top15_item_disp)
-            top = top[[item_col, 'quantity']]
-            fig = px.bar(top, x='quantity', y=item_col, orientation='h',
-                         color_discrete_sequence=[EARTH['primary']],
-                         text_auto=True)
-            fig.update_layout(
-                yaxis={'categoryorder':'total ascending'},
-                plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                margin=dict(l=0, r=0, t=10, b=0)
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
-            top5 = top.sort_values('quantity', ascending=False).head(5)
-            top5_html = full_breakdown_html(
-                list(zip(top5[item_col], top5['quantity'])), suffix=' units', decimals=0, show_pct=False
-            )
-            chart_insight(
-                f"Top 5 sellers — {top5_html}. Together, all {len(top)} items shown total "
-                f"<b>{top['quantity'].sum():,.0f}</b> units sold in this period."
-            )
-        else:
-            st.info("No sales records for this filter combination.")
-
-    st.markdown("")
-
-    # ── Sales Trend — merges the old "Daily Revenue Trend" and "Sales
-    # Trend" charts into one: pick any metric, any granularity (Daily up
-    # to Yearly, or an exact Custom Date range), with a moving-average
-    # overlay at the finer granularities where a single day/week can be
-    # noisy on its own. ──────────────────────────────────────────────────
-    with st.container(border=True):
-        st.markdown("#### Sales Trend")
-        trend_src = _sa_apply_filters(sales_df, 'sa_trend')
-        if 'date' in trend_src.columns and len(trend_src) > 0:
-            tcol1, tcol2, tcol3 = st.columns(3)
-            with tcol1:
-                metric_choice = st.selectbox(
-                    "Metric to plot", ['Revenue', 'Transactions', 'Units Sold'],
-                    key='monthly_trend_metric'
-                )
-            with tcol2:
-                granularity = st.selectbox(
-                    "View by", ['Daily', 'Weekly', 'Monthly', 'Yearly', 'Custom Date'],
-                    index=2, key='trend_granularity'
-                )
-            with tcol3:
-                if granularity == 'Custom Date':
-                    sa_trend_custom_range = st.date_input(
-                        "Date Range",
-                        value=(trend_src['date'].min().date(), trend_src['date'].max().date()),
-                        min_value=trend_src['date'].min().date(), max_value=trend_src['date'].max().date(),
-                        key='sa_trend_customrange'
-                    )
+        with st.container(border=True):
+            st.markdown("#### Busiest Hours")
+            st.caption("How many orders come in during each hour of the day. Use it to plan staffing "
+                       "and to have popular items ready just before the rush.")
+            if 'date' in sales_df.columns and len(sales_df) > 0:
+                # The database keeps the sale DATE only, so time-of-day comes from
+                # the sales CSV, which keeps the time.
+                _busy_base = sales_df.copy()
+                _busy_base['date'] = pd.to_datetime(_busy_base['date'], errors='coerce')
+                if _busy_base['date'].dt.hour.nunique() <= 1:
+                    _csv_busy = load_csv(DATA_PATHS['sales'])
+                    if _csv_busy is not None and 'date' in _csv_busy.columns:
+                        _busy_base = _csv_busy
+                if _busy_base['date'].dt.hour.nunique() <= 1:
+                    st.info("Time of day isn't available in the stored sales records yet, "
+                            "so busiest hours can't be shown.")
                 else:
-                    st.empty()
+                    busy_src = _sa_apply_filters(_busy_base, 'sa_busy')
+                    if len(busy_src) == 0:
+                        st.info("No sales records for this filter combination.")
+                    else:
+                        def _hr_lbl(h):
+                            return f"{(int(h) % 12) or 12} {'AM' if int(h) < 12 else 'PM'}"
+                        by_hr = busy_src['date'].dt.hour.value_counts().sort_index()
+                        by_hr = by_hr[by_hr.index.isin(range(24))]
+                        busy_df = pd.DataFrame({'Hour': [_hr_lbl(h) for h in by_hr.index],
+                                                'Orders': by_hr.values})
+                        fig = px.bar(busy_df, x='Hour', y='Orders',
+                                     color_discrete_sequence=[EARTH['primary']], text_auto=True)
+                        fig.update_layout(
+                            plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+                            xaxis=dict(type='category'),
+                            margin=dict(l=0, r=0, t=10, b=0)
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                        top3 = by_hr.sort_values(ascending=False).head(3)
+                        chart_insight(
+                            "Your busiest hours are " + ", ".join(f"<b>{_hr_lbl(h)}</b>" for h in top3.index) +
+                            ". Have popular items ready before these hours, and avoid over-preparing "
+                            "outside them."
+                        )
 
-            fc2 = trend_src.copy()
-            if granularity == 'Custom Date':
-                if isinstance(sa_trend_custom_range, tuple) and len(sa_trend_custom_range) == 2:
-                    fc2 = fc2[(fc2['date'].dt.date >= sa_trend_custom_range[0]) & (fc2['date'].dt.date <= sa_trend_custom_range[1])]
-                fc2['period'] = fc2['date'].dt.date
-                x_title, ma_window = 'Date', 7
-            elif granularity == 'Daily':
-                fc2['period'] = fc2['date'].dt.date
-                x_title, ma_window = 'Date', 7
-            elif granularity == 'Weekly':
-                fc2['period'] = fc2['date'].dt.to_period('W').dt.start_time
-                x_title, ma_window = 'Week', 4
-            elif granularity == 'Monthly':
-                fc2['period'] = fc2['date'].dt.to_period('M').dt.to_timestamp()
-                x_title, ma_window = 'Month', 3
-            else:
-                fc2['period'] = fc2['date'].dt.to_period('Y').dt.to_timestamp()
-                x_title, ma_window = 'Year', 1  # no smoothing needed at yearly granularity
+        st.markdown("---")
 
-            agg_map = {}
-            if 'total' in fc2.columns:    agg_map['total'] = 'sum'
-            if 'quantity' in fc2.columns: agg_map['quantity'] = 'sum'
+        # Transaction KPIs now live in the boxed "Business Summary" section at
+        # the top of this page (see above) instead of here.
+        item_col = 'item' if 'item' in sales_df.columns else \
+                   'item_name' if 'item_name' in sales_df.columns else None
 
-            trend_tbl = fc2.groupby('period').agg(
-                transactions=('date', 'count'),
-                **({'revenue': ('total', 'sum')} if 'total' in fc2.columns else {}),
-                **({'units': ('quantity', 'sum')} if 'quantity' in fc2.columns else {})
-            ).reset_index().sort_values('period')
-
-            y_map = {
-                'Revenue':      ('revenue', 'Revenue (₱)', '₱'),
-                'Transactions': ('transactions', 'Transactions', ''),
-                'Units Sold':   ('units', 'Units Sold', ''),
-            }
-            y_col, y_label, y_prefix = y_map[metric_choice]
-
-            if y_col in trend_tbl.columns:
-                show_ma = ma_window > 1 and len(trend_tbl) > 1
-                if show_ma:
-                    trend_tbl[f'{ma_window}-period MA'] = trend_tbl[y_col].rolling(ma_window, min_periods=1).mean()
-
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(
-                    x=trend_tbl['period'], y=trend_tbl[y_col],
-                    mode='lines+markers', name=metric_choice,
-                    line=dict(color=EARTH['light'] if show_ma else EARTH['accent'], width=1 if show_ma else 2.5),
-                    opacity=0.6 if show_ma else 1
-                ))
-                if show_ma:
-                    fig.add_trace(go.Scatter(
-                        x=trend_tbl['period'], y=trend_tbl[f'{ma_window}-period MA'],
-                        mode='lines', name=f'{ma_window}-period MA',
-                        line=dict(color=EARTH['primary'], width=2.5)
-                    ))
+        # Horizontal bar — top 15 items — own filter
+        with st.container(border=True):
+            st.markdown("#### Top 15 Items by Quantity")
+            top15_src = _sa_apply_filters(sales_df, 'sa_top15')
+            if item_col and 'quantity' in top15_src.columns and len(top15_src) > 0:
+                top15_src['quantity'] = pd.to_numeric(top15_src['quantity'], errors='coerce')
+                top15_src, top15_item_disp, _ = add_normalized_keys(top15_src, item_col=item_col)
+                top = top15_src.groupby('_item_key')['quantity'].sum().nlargest(15).reset_index()
+                top[item_col] = top['_item_key'].map(top15_item_disp)
+                top = top[[item_col, 'quantity']]
+                fig = px.bar(top, x='quantity', y=item_col, orientation='h',
+                             color_discrete_sequence=[EARTH['primary']],
+                             text_auto=True)
                 fig.update_layout(
+                    yaxis={'categoryorder':'total ascending'},
                     plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                    xaxis_title=x_title, yaxis_title=y_label,
-                    yaxis=dict(tickprefix=y_prefix, tickformat=',.0f'),
-                    legend=dict(orientation='h', y=1.1),
                     margin=dict(l=0, r=0, t=10, b=0)
                 )
                 st.plotly_chart(fig, use_container_width=True)
 
-                if len(trend_tbl) >= 2:
-                    trend_delta = trend_tbl[y_col].iloc[-1] - trend_tbl[y_col].iloc[0]
-                    trend_word = "grown" if trend_delta > 0 else "declined"
-                    peak_row = trend_tbl.loc[trend_tbl[y_col].idxmax()]
-                    low_row  = trend_tbl.loc[trend_tbl[y_col].idxmin()]
-                    _period_fmt = {'Day': '%b %d, %Y', 'Week': '%b %d, %Y', 'Month': '%b %Y', 'Year': '%Y'}.get(x_title, '%b %d, %Y')
-                    _peak_lbl = pd.to_datetime(peak_row['period']).strftime(_period_fmt)
-                    _low_lbl  = pd.to_datetime(low_row['period']).strftime(_period_fmt)
-                    chart_insight(
-                        f"{metric_choice} has <b>{trend_word}</b> from "
-                        f"{y_prefix}{trend_tbl[y_col].iloc[0]:,.0f} to <b>{y_prefix}{trend_tbl[y_col].iloc[-1]:,.0f}</b> "
-                        f"across this range ({len(trend_tbl)} {x_title.lower()}(s) shown). "
-                        f"The highest point was <b>{y_prefix}{peak_row[y_col]:,.0f}</b> ({_peak_lbl}) and the "
-                        f"lowest was <b>{y_prefix}{low_row[y_col]:,.0f}</b> ({_low_lbl}); average across the "
-                        f"range was <b>{y_prefix}{trend_tbl[y_col].mean():,.0f}</b>."
-                    )
+                top5 = top.sort_values('quantity', ascending=False).head(5)
+                top5_html = full_breakdown_html(
+                    list(zip(top5[item_col], top5['quantity'])), suffix=' units', decimals=0, show_pct=False
+                )
+                chart_insight(
+                    f"Top 5 sellers — {top5_html}. Together, all {len(top)} items shown total "
+                    f"<b>{top['quantity'].sum():,.0f}</b> units sold in this period."
+                )
             else:
-                st.info(f"'{metric_choice}' isn't available in this dataset.")
-        else:
-            st.info("No sales records for this filter combination.")
+                st.info("No sales records for this filter combination.")
 
-# ============================================================================
-# PAGE 3: WASTE ANALYSIS
-# ============================================================================
+        st.markdown("")
 
-elif page == 'Waste Analytics':
+        # ── Sales Trend — merges the old "Daily Revenue Trend" and "Sales
+        # Trend" charts into one: pick any metric, any granularity (Daily up
+        # to Yearly, or an exact Custom Date range), with a moving-average
+        # overlay at the finer granularities where a single day/week can be
+        # noisy on its own. ──────────────────────────────────────────────────
+        with st.container(border=True):
+            st.markdown("#### Sales Trend")
+            trend_src = _sa_apply_filters(sales_df, 'sa_trend')
+            if 'date' in trend_src.columns and len(trend_src) > 0:
+                tcol1, tcol2, tcol3 = st.columns(3)
+                with tcol1:
+                    metric_choice = st.selectbox(
+                        "Metric to plot", ['Revenue', 'Transactions', 'Units Sold'],
+                        key='monthly_trend_metric'
+                    )
+                with tcol2:
+                    granularity = st.selectbox(
+                        "View by", ['Daily', 'Weekly', 'Monthly', 'Yearly', 'Custom Date'],
+                        index=2, key='trend_granularity'
+                    )
+                with tcol3:
+                    if granularity == 'Custom Date':
+                        sa_trend_custom_range = st.date_input(
+                            "Date Range",
+                            value=(trend_src['date'].min().date(), trend_src['date'].max().date()),
+                            min_value=trend_src['date'].min().date(), max_value=trend_src['date'].max().date(),
+                            key='sa_trend_customrange'
+                        )
+                    else:
+                        st.empty()
 
-    st.title("Waste Analytics")
-    st.caption("To add new waste records, go to the **Import Data** page — all data uploads now happen there.")
+                fc2 = trend_src.copy()
+                if granularity == 'Custom Date':
+                    if isinstance(sa_trend_custom_range, tuple) and len(sa_trend_custom_range) == 2:
+                        fc2 = fc2[(fc2['date'].dt.date >= sa_trend_custom_range[0]) & (fc2['date'].dt.date <= sa_trend_custom_range[1])]
+                    fc2['period'] = fc2['date'].dt.date
+                    x_title, ma_window = 'Date', 7
+                elif granularity == 'Daily':
+                    fc2['period'] = fc2['date'].dt.date
+                    x_title, ma_window = 'Date', 7
+                elif granularity == 'Weekly':
+                    fc2['period'] = fc2['date'].dt.to_period('W').dt.start_time
+                    x_title, ma_window = 'Week', 4
+                elif granularity == 'Monthly':
+                    fc2['period'] = fc2['date'].dt.to_period('M').dt.to_timestamp()
+                    x_title, ma_window = 'Month', 3
+                else:
+                    fc2['period'] = fc2['date'].dt.to_period('Y').dt.to_timestamp()
+                    x_title, ma_window = 'Year', 1  # no smoothing needed at yearly granularity
 
-    # ── WASTE DATA FILE PATH — saved in Data_Cleaning folder ─────────────
-    WASTE_FILE = os.path.join(DATA_CLEANING_DIR, 'kofe_tala_waste_data.csv')
+                agg_map = {}
+                if 'total' in fc2.columns:    agg_map['total'] = 'sum'
+                if 'quantity' in fc2.columns: agg_map['quantity'] = 'sum'
 
-    @st.cache_data(ttl=300)
-    def load_waste_data(_path=None):
-        """Load existing waste CSV — cached for fast page switching."""
-        path = _path or WASTE_FILE
-        try:
-            df = pd.read_csv(path)
-            df['date'] = pd.to_datetime(df['date'], errors='coerce')
-            return df
-        except Exception:
-            return pd.DataFrame(columns=[
-                'date','item_name','category','quantity_wasted',
-                'waste_reason','cost_per_item','total_waste_cost'
-            ])
+                trend_tbl = fc2.groupby('period').agg(
+                    transactions=('date', 'count'),
+                    **({'revenue': ('total', 'sum')} if 'total' in fc2.columns else {}),
+                    **({'units': ('quantity', 'sum')} if 'quantity' in fc2.columns else {})
+                ).reset_index().sort_values('period')
 
-    # ── Load existing waste data (CSV fallback when DB isn't available) ────
-    existing_waste = load_waste_data()
+                y_map = {
+                    'Revenue':      ('revenue', 'Revenue (₱)', '₱'),
+                    'Transactions': ('transactions', 'Transactions', ''),
+                    'Units Sold':   ('units', 'Units Sold', ''),
+                }
+                y_col, y_label, y_prefix = y_map[metric_choice]
 
-    # ── Current Waste Data + Analytics ─────────────────────────
-    # Prefer the same DB-first waste_df used by Dashboard Overview and the
-    # Import Data page, so a delete/edit made on the Import Data page (which only
-    # touches the database, not this CSV) is reflected here immediately too.
-    display_waste = waste_df if db_available() else existing_waste
+                if y_col in trend_tbl.columns:
+                    show_ma = ma_window > 1 and len(trend_tbl) > 1
+                    if show_ma:
+                        trend_tbl[f'{ma_window}-period MA'] = trend_tbl[y_col].rolling(ma_window, min_periods=1).mean()
 
-    if display_waste is not None and len(display_waste) > 0:
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(
+                        x=trend_tbl['period'], y=trend_tbl[y_col],
+                        mode='lines+markers', name=metric_choice,
+                        line=dict(color=EARTH['light'] if show_ma else EARTH['accent'], width=1 if show_ma else 2.5),
+                        opacity=0.6 if show_ma else 1
+                    ))
+                    if show_ma:
+                        fig.add_trace(go.Scatter(
+                            x=trend_tbl['period'], y=trend_tbl[f'{ma_window}-period MA'],
+                            mode='lines', name=f'{ma_window}-period MA',
+                            line=dict(color=EARTH['primary'], width=2.5)
+                        ))
+                    fig.update_layout(
+                        plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+                        xaxis_title=x_title, yaxis_title=y_label,
+                        yaxis=dict(tickprefix=y_prefix, tickformat=',.0f'),
+                        legend=dict(orientation='h', y=1.1),
+                        margin=dict(l=0, r=0, t=10, b=0)
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
 
-        def _wa_apply_filters(base_df, key_prefix, show_reason=True):
-            """Renders the same Year/Quarter/Month (+ Custom Date) filter row
-            used by Transaction KPIs on Sales Analytics and Performance
-            Distribution on Menu Performance, plus a Category select and
-            (optionally) a Waste Reason select — kept local to each chart so
-            no two visualizations on this page share the same filter
-            controls."""
+                    if len(trend_tbl) >= 2:
+                        trend_delta = trend_tbl[y_col].iloc[-1] - trend_tbl[y_col].iloc[0]
+                        trend_word = "grown" if trend_delta > 0 else "declined"
+                        peak_row = trend_tbl.loc[trend_tbl[y_col].idxmax()]
+                        low_row  = trend_tbl.loc[trend_tbl[y_col].idxmin()]
+                        _period_fmt = {'Day': '%b %d, %Y', 'Week': '%b %d, %Y', 'Month': '%b %Y', 'Year': '%Y'}.get(x_title, '%b %d, %Y')
+                        _peak_lbl = pd.to_datetime(peak_row['period']).strftime(_period_fmt)
+                        _low_lbl  = pd.to_datetime(low_row['period']).strftime(_period_fmt)
+                        chart_insight(
+                            f"{metric_choice} has <b>{trend_word}</b> from "
+                            f"{y_prefix}{trend_tbl[y_col].iloc[0]:,.0f} to <b>{y_prefix}{trend_tbl[y_col].iloc[-1]:,.0f}</b> "
+                            f"across this range ({len(trend_tbl)} {x_title.lower()}(s) shown). "
+                            f"The highest point was <b>{y_prefix}{peak_row[y_col]:,.0f}</b> ({_peak_lbl}) and the "
+                            f"lowest was <b>{y_prefix}{low_row[y_col]:,.0f}</b> ({_low_lbl}); average across the "
+                            f"range was <b>{y_prefix}{trend_tbl[y_col].mean():,.0f}</b>."
+                        )
+                else:
+                    st.info(f"'{metric_choice}' isn't available in this dataset.")
+            else:
+                st.info("No sales records for this filter combination.")
+
+    with _t1:
+        st.caption("To add or update menu items or sales records, go to the **Import Data** page — all data uploads now happen there.")
+
+        PERF_COLORS = {
+            'Keep':       EARTH['success'],
+            'Improve':    EARTH['warning'],
+            'Reconsider': EARTH['danger'],
+        }
+
+        # ── Compute menu performance LIVE from the DB-first sales_df, instead of
+        # depending on the static Feature_Engineering batch file. This uses the
+        # same Keep/Improve/Reconsider rule as the original ML pipeline
+        # (75th/25th percentile of quantity sold, median profit margin), so it
+        # always reflects whatever is currently in the database.
+        src = sales_df.copy() if sales_df is not None else pd.DataFrame()
+        if len(src) > 0 and {'price', 'cost'}.issubset(src.columns):
+            src['price'] = pd.to_numeric(src['price'], errors='coerce')
+            src['cost']  = pd.to_numeric(src['cost'], errors='coerce')
+
+            # Prefer the REAL per-item cost from the Menu table (DIM_ITEM /
+            # menu_df, kept current via Database → Menu uploads) over each
+            # individual sale's own 'cost' value. A sale's cost is written once,
+            # at the moment that transaction was recorded, and for items with no
+            # real COST at upload time it was filled with a flat 30%-of-price
+            # estimate that stays wrong forever — updating the menu later never
+            # retroactively fixes it. Matching is done on a lowercased/stripped
+            # item name, same as everywhere else in the app.
+            _item_name_col = 'item_name' if 'item_name' in src.columns else \
+                              'item' if 'item' in src.columns else None
+            _menu_matched = pd.Series(False, index=src.index)
+            if _item_name_col and menu_df is not None and len(menu_df) > 0 and \
+               {'item_name', 'cost'}.issubset(menu_df.columns):
+                _menu_ref = menu_df.copy()
+                _menu_ref['_key'] = _menu_ref['item_name'].astype(str).str.strip().str.lower()
+                _menu_ref['cost'] = pd.to_numeric(_menu_ref['cost'], errors='coerce')
+                _menu_cost_by_key = (
+                    _menu_ref.dropna(subset=['cost'])
+                             .drop_duplicates('_key', keep='last')
+                             .set_index('_key')['cost']
+                )
+                _src_key = src[_item_name_col].astype(str).str.strip().str.lower()
+                _matched_cost = _src_key.map(_menu_cost_by_key)
+                _menu_matched = _matched_cost.notna()
+                src.loc[_menu_matched, 'cost'] = _matched_cost[_menu_matched]
+
+            # For any item with no Menu match, fall back to the average cost
+            # RATIO (cost ÷ price) of items in the same category that DO have a
+            # real, non-flat cost — more representative than one constant
+            # applied across the whole menu. Falls back to the flat ratio only
+            # when a category has no real-cost items to learn from either.
+            _is_flat_est = (~_menu_matched) & (src['price'] > 0) & \
+                            ((src['cost'] - src['price'] * 0.3).abs() <= 0.01)
+            if 'category' in src.columns and _is_flat_est.any() and (~_is_flat_est).any():
+                _real = src[~_is_flat_est & (src['price'] > 0)]
+                _real_ratio = _real['cost'] / _real['price']
+                _cat_ratio = _real_ratio.groupby(_real['category']).mean()
+                _fallback_ratio = _real_ratio.mean() if len(_real) else 0.3
+                _ratio_for_row = src.loc[_is_flat_est, 'category'].map(_cat_ratio).fillna(_fallback_ratio)
+                src.loc[_is_flat_est, 'cost'] = src.loc[_is_flat_est, 'price'] * _ratio_for_row
+
+            src['profit_margin'] = np.where(src['price'] > 0, (src['price'] - src['cost']) / src['price'], np.nan)
+
+        item_col = 'item' if 'item' in src.columns else \
+                   'item_name' if 'item_name' in src.columns else None
+
+        def _mp_apply_filters(base_df, key_prefix):
+            """Renders its own Year/Quarter/Month (Month cascades off Quarter)
+            + Category filter row and returns the filtered dataframe — kept
+            local to each chart so no two visualizations on this page share
+            the same filter controls."""
             df_f = render_year_quarter_month_filter(base_df, key_prefix, date_col='date') \
                 if 'date' in base_df.columns else base_df.copy()
             if 'category' in df_f.columns:
@@ -2011,1214 +1948,953 @@ elif page == 'Waste Analytics':
                 sel_cat = st.selectbox("Category", ['All'] + cats, key=f'{key_prefix}_cat')
                 if sel_cat != 'All':
                     df_f = df_f[df_f['category'] == sel_cat]
-            if show_reason and 'waste_reason' in df_f.columns:
-                reasons = sorted(df_f['waste_reason'].dropna().unique().tolist())
-                sel_reason = st.selectbox("Waste Reason", ['All'] + reasons, key=f'{key_prefix}_reason')
-                if sel_reason != 'All':
-                    df_f = df_f[df_f['waste_reason'] == sel_reason]
             return df_f
 
-        # ── Waste Summary (KPIs) — boxed, uniform with the Business Summary
-        # box on Sales Analytics and the Performance Distribution box on
-        # Menu Performance ───────────────────────────────────────────────
-        with st.container(border=True):
-            st.markdown("### Waste Summary")
-            kpi_waste = _wa_apply_filters(display_waste, 'wa_kpi')
-            st.caption(f"Showing **{len(kpi_waste):,}** of {len(display_waste):,} waste records")
+        def _mp_build_summary(df_f):
+            """Aggregates a (already-filtered) sales slice into one row per item,
+            with a live Keep/Improve/Reconsider classification."""
+            if not item_col:
+                return pd.DataFrame()
 
-            k1, k2, k3, k4 = st.columns(4)
-            with k1:
-                total_qty = kpi_waste['quantity_wasted'].sum() if 'quantity_wasted' in kpi_waste.columns else 0
-                stat_card("Total Units Wasted", f"{int(total_qty):,}")
-            with k2:
-                total_cost = kpi_waste['total_waste_cost'].sum() if 'total_waste_cost' in kpi_waste.columns else 0
-                stat_card("Total Waste Cost", f"₱{total_cost:,.2f}")
-            with k3:
-                n_items = kpi_waste['item_name'].nunique() if 'item_name' in kpi_waste.columns else 0
-                stat_card("Unique Items Wasted", n_items)
-            with k4:
-                n_days = kpi_waste['date'].nunique() if 'date' in kpi_waste.columns else 0
-                stat_card("Days Tracked", n_days)
+            # Normalize item/category spelling first — inconsistent casing or
+            # whitespace in the uploaded data otherwise splits one item's volume
+            # across multiple rows, and can pick an inconsistent category label.
+            df_f, mp_item_disp, mp_cat_disp = add_normalized_keys(
+                df_f, item_col=item_col, cat_col='category' if 'category' in df_f.columns else None
+            )
+            df_f[item_col] = df_f['_item_key'].map(mp_item_disp)
+            if mp_cat_disp is not None:
+                df_f['category'] = df_f['_cat_key'].map(mp_cat_disp)
 
-        st.markdown("")
+            agg_dict = {'quantity': 'sum'} if 'quantity' in df_f.columns else {}
+            if 'total' in df_f.columns:         agg_dict['total'] = 'sum'
+            if 'profit_margin' in df_f.columns: agg_dict['profit_margin'] = 'mean'
+            if 'category' in df_f.columns:      agg_dict['category'] = 'first'
 
-        # ── Charts ────────────────────────────────────────────────────────
-        # Bar — waste cost by item (top 10) — own filter
-        with st.container(border=True):
-            st.markdown("#### Top 10 Items by Waste Cost")
-            top10_waste = _wa_apply_filters(display_waste, 'wa_top10')
-            if 'item_name' in top10_waste.columns and 'total_waste_cost' in top10_waste.columns and len(top10_waste) > 0:
-                top10_waste, top10_item_disp, _ = add_normalized_keys(top10_waste, item_col='item_name')
-                top_items = (
-                    top10_waste.groupby('_item_key')['total_waste_cost']
-                    .sum().nlargest(10).reset_index()
-                )
-                top_items['item_name'] = top_items['_item_key'].map(top10_item_disp)
-                top_items = top_items[['item_name', 'total_waste_cost']]
-                top_items.columns = ['Item', 'Waste Cost']
-                fig = px.bar(top_items, x='Waste Cost', y='Item',
-                             orientation='h',
-                             color='Waste Cost',
-                             color_continuous_scale=['#C4A882','#6F4E37'],
-                             text_auto=',.0f')
-                fig.update_traces(texttemplate='₱%{x:,.0f}', textposition='outside')
-                fig.update_layout(
-                    yaxis={'categoryorder':'total ascending'},
-                    plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                    coloraxis_showscale=False,
-                    xaxis_title='Waste Cost (₱)',
-                    margin=dict(l=0,r=80,t=10,b=0)
-                )
-                st.plotly_chart(fig, use_container_width=True)
-
-                top_items_3 = top_items.sort_values('Waste Cost', ascending=False).head(3)
-                top_items_html = full_breakdown_html(
-                    list(zip(top_items_3['Item'], top_items_3['Waste Cost'])), prefix='₱', show_pct=False
-                )
-                chart_insight(
-                    f"Top 3 by waste cost — {top_items_html}. Together, all {len(top_items)} items shown "
-                    f"total <b>₱{top_items['Waste Cost'].sum():,.2f}</b> in this filtered view."
-                )
+            if agg_dict:
+                s = df_f.groupby(item_col).agg(agg_dict).reset_index()
             else:
-                st.info("No waste records for this filter combination.")
+                s = df_f[item_col].value_counts().reset_index()
+                s.columns = [item_col, 'count']
 
-        st.markdown("")
+            if {'quantity', 'profit_margin'}.issubset(s.columns) and len(s) > 0:
+                qty_75    = s['quantity'].quantile(0.75)
+                qty_25    = s['quantity'].quantile(0.25)
+                margin_50 = s['profit_margin'].quantile(0.50)
 
-        # Bar — waste by reason — own filter (no Reason filter here, chart IS the reason breakdown)
-        with st.container(border=True):
-            st.markdown("#### Waste by Reason")
-            reason_waste = _wa_apply_filters(display_waste, 'wa_reason', show_reason=False)
-            if 'waste_reason' in reason_waste.columns and 'total_waste_cost' in reason_waste.columns and len(reason_waste) > 0:
-                reason = (
-                    reason_waste.groupby('waste_reason')['total_waste_cost']
-                    .sum().sort_values().reset_index()
-                )
-                reason.columns = ['Reason', 'Waste Cost']
-                reason_colors = {
-                    'Over-preparation': EARTH['accent'],
-                    'Over-prepared':    EARTH['accent'],
-                    'Spoilage':         EARTH['danger'],
-                    'Spoiled':          EARTH['danger'],
-                    'Expired':          '#5D4037',
-                    'Quality issue':    EARTH['warning'],
-                }
-                fig = px.bar(reason, x='Waste Cost', y='Reason',
-                             orientation='h',
-                             color='Reason',
-                             color_discrete_map=reason_colors,
-                             text_auto=',.0f')
-                fig.update_traces(texttemplate='₱%{x:,.0f}', textposition='outside')
-                fig.update_layout(
-                    plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                    showlegend=False,
-                    xaxis_title='Waste Cost (₱)',
-                    margin=dict(l=0,r=80,t=10,b=0)
-                )
-                st.plotly_chart(fig, use_container_width=True)
-
-                reason_sorted = reason.sort_values('Waste Cost', ascending=False)
-                reason_breakdown = full_breakdown_html(
-                    list(zip(reason_sorted['Reason'], reason_sorted['Waste Cost'])), prefix='₱'
-                )
-                chart_insight(
-                    f"Waste cost by reason — {reason_breakdown}. "
-                    f"<b>{reason_sorted.iloc[0]['Reason']}</b> is the leading cause of waste in this view."
-                )
-
-        st.markdown("")
-
-        # Waste trend — its own filter (granularity + category + time period)
-        with st.container(border=True):
-            st.markdown("#### Waste Cost Trend")
-            trend_waste = _wa_apply_filters(display_waste, 'wa_trend', show_reason=False)
-            if 'date' in trend_waste.columns and 'total_waste_cost' in trend_waste.columns and len(trend_waste) > 0:
-                wtc1, wtc2 = st.columns([1, 2])
-                with wtc1:
-                    trend_granularity = st.selectbox(
-                        "View by", ['Daily', 'Weekly', 'Monthly', 'Custom Date'], index=2, key='waste_trend_granularity'
-                    )
-                with wtc2:
-                    if trend_granularity == 'Custom Date':
-                        wa_trend_custom_range = st.date_input(
-                            "Date Range",
-                            value=(trend_waste['date'].min().date(), trend_waste['date'].max().date()),
-                            min_value=trend_waste['date'].min().date(), max_value=trend_waste['date'].max().date(),
-                            key='wa_trend_customrange'
-                        )
+                def _classify_menu(row):
+                    # Classic menu-engineering matrix (popularity × profitability),
+                    # mapped onto 3 buckets instead of 4:
+                    #   High qty + High margin  → Keep       (a "Star")
+                    #   High qty + Low margin   → Improve    (a "Plowhorse" — sells
+                    #                              well but needs a cost/price fix)
+                    #   Low qty  + High margin  → Improve    (a "Puzzle" — already
+                    #                              profitable, just needs more
+                    #                              promotion, not removal)
+                    #   Low qty  + Low margin   → Reconsider (a "Dog")
+                    # A high-margin item used to get flagged as Reconsider purely
+                    # for having low volume, even though its margin means it's
+                    # worth promoting rather than dropping — this makes margin
+                    # matter for low-volume items too, not just quantity.
+                    high_qty    = row['quantity'] >= qty_75
+                    low_qty     = row['quantity'] < qty_25
+                    high_margin = row['profit_margin'] >= margin_50
+                    if high_qty and high_margin:
+                        return 'Keep'
+                    elif low_qty and not high_margin:
+                        return 'Reconsider'
                     else:
-                        st.empty()
+                        return 'Improve'
 
-                twaste = trend_waste.copy()
+                s['menu_performance'] = s.apply(_classify_menu, axis=1)
+            return s
 
-                if trend_granularity == 'Custom Date':
-                    if isinstance(wa_trend_custom_range, tuple) and len(wa_trend_custom_range) == 2:
-                        twaste = twaste[(twaste['date'].dt.date >= wa_trend_custom_range[0]) & (twaste['date'].dt.date <= wa_trend_custom_range[1])]
-                    twaste['period'] = twaste['date'].dt.date
-                    ma_window = 7
-                elif trend_granularity == 'Daily':
-                    twaste['period'] = twaste['date'].dt.date
-                    ma_window = 7
-                elif trend_granularity == 'Weekly':
-                    twaste['period'] = twaste['date'].dt.to_period('W').dt.start_time
-                    ma_window = 4
-                else:
-                    twaste['period'] = twaste['date'].dt.to_period('M').dt.to_timestamp()
-                    ma_window = 3
-
-                daily = twaste.groupby('period')['total_waste_cost'].sum().reset_index()
-                daily.columns = ['date', 'waste_cost']
-                daily[f'{ma_window}-period avg'] = daily['waste_cost'].rolling(ma_window, min_periods=1).mean()
-
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(
-                    x=daily['date'], y=daily['waste_cost'],
-                    name=f'{trend_granularity} Waste Cost',
-                    mode='lines+markers',
-                    line=dict(color=EARTH['light'], width=1.5)
-                ))
-                fig.add_trace(go.Scatter(
-                    x=daily['date'], y=daily[f'{ma_window}-period avg'],
-                    name=f'{ma_window}-period Average',
-                    line=dict(color=EARTH['primary'], width=2.5),
-                    mode='lines'
-                ))
-                fig.update_layout(
-                    plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                    yaxis=dict(tickprefix='₱', tickformat=',.0f'),
-                    legend=dict(orientation='h', y=1.1),
-                    margin=dict(l=0,r=0,t=10,b=0)
-                )
-                st.plotly_chart(fig, use_container_width=True)
-
-                if len(daily) >= 2:
-                    trend_dir_wa = "rising" if daily[f'{ma_window}-period avg'].iloc[-1] > daily[f'{ma_window}-period avg'].iloc[0] else "falling"
-                    peak_row_wa = daily.loc[daily['waste_cost'].idxmax()]
-                    low_row_wa  = daily.loc[daily['waste_cost'].idxmin()]
-                    chart_insight(
-                        f"The waste cost trend is <b>{trend_dir_wa}</b> over this range ({len(daily)} "
-                        f"{trend_granularity.lower()} periods). Latest {ma_window}-period average: "
-                        f"<b>₱{daily[f'{ma_window}-period avg'].iloc[-1]:,.2f}</b>. The highest single period was "
-                        f"<b>₱{peak_row_wa['waste_cost']:,.2f}</b> "
-                        f"({pd.to_datetime(peak_row_wa['date']).strftime('%Y-%m-%d')}), the lowest was "
-                        f"<b>₱{low_row_wa['waste_cost']:,.2f}</b> "
-                        f"({pd.to_datetime(low_row_wa['date']).strftime('%Y-%m-%d')}), and the overall "
-                        f"average was <b>₱{daily['waste_cost'].mean():,.2f}</b> per {trend_granularity.lower()[:-2]}.",
-                        'warn' if trend_dir_wa == 'rising' else 'good'
-                    )
-            else:
-                st.info("No waste records for this filter combination.")
+        # ── Performance Distribution — its own filter ───────────────────────────
+        with st.container(border=True):
+            st.markdown("#### Performance Distribution")
+            st.caption("Which items to Keep, Improve, or Reconsider, filtered by period and category.")
+            src_dist = _mp_apply_filters(src, 'mp_dist')
+            summary  = _mp_build_summary(src_dist)
 
         st.markdown("")
 
-        # ── Waste by Day of Week — which day wastes the most — own filter ──
-        with st.container(border=True):
-            st.markdown("#### Waste by Day of Week")
-            dow_waste_src = _wa_apply_filters(display_waste, 'wa_dow')
-            if 'date' in dow_waste_src.columns and 'total_waste_cost' in dow_waste_src.columns and len(dow_waste_src) > 0:
-                day_order_w = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']
-                dw = dow_waste_src.copy()
-                dw['day'] = dw['date'].dt.day_name()
-                dow_waste = dw.groupby('day')['total_waste_cost'].sum().reindex(day_order_w).fillna(0).reset_index()
-                dow_waste.columns = ['Day', 'Waste Cost']
-                worst_day_idx = dow_waste['Waste Cost'].idxmax()
-                bar_colors = [EARTH['danger'] if i == worst_day_idx else EARTH['light']
-                              for i in range(len(dow_waste))]
-                fig = px.bar(dow_waste, x='Day', y='Waste Cost', text_auto=',.0f')
-                fig.update_traces(marker_color=bar_colors, texttemplate='₱%{y:,.0f}', textposition='outside')
-                fig.update_layout(
-                    plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                    yaxis=dict(tickprefix='₱', tickformat=',.0f'),
-                    margin=dict(l=0,r=0,t=10,b=0)
-                )
-                st.plotly_chart(fig, use_container_width=True)
-                dow_waste_sorted = dow_waste.sort_values('Waste Cost', ascending=False)
-                dow_waste_html = full_breakdown_html(
-                    list(zip(dow_waste_sorted['Day'], dow_waste_sorted['Waste Cost'])), prefix='₱'
-                )
-                chart_insight(
-                    f"Waste cost by day of week — {dow_waste_html}. "
-                    f"<b>{dow_waste.loc[worst_day_idx,'Day']}</b> has the highest waste cost — "
-                    f"consider adjusting prep quantities on that day.",
-                    'warn'
-                )
-            else:
-                st.info("No waste records for this filter combination.")
+        if item_col and len(summary) > 0:
 
-        st.markdown("")
+            # ── Sort controls (for the tables below) ────────────────────────
+            sort_options = [c for c in ['quantity','total','profit_margin'] if c in summary.columns]
+            scol1, scol2 = st.columns(2)
+            with scol1:
+                sort_by  = st.selectbox("Sort by", sort_options if sort_options else [item_col], key='mp_sort_by')
+            with scol2:
+                sort_dir = st.selectbox("Order", ['Descending','Ascending'], key='mp_sort_dir')
 
-        # ── Waste Heatmap — day of week × week/month, fully self-contained ──
-        with st.container(border=True):
-            st.markdown("#### Waste Heatmap")
-            st.caption("Darker cells = higher waste cost.")
-            if 'date' in display_waste.columns and 'total_waste_cost' in display_waste.columns:
-                hcolw1, hcolw2, hcolw3, hcolw4 = st.columns(4)
-                with hcolw1:
-                    heatmap_granularity = st.selectbox(
-                        "View by", ['Weekly', 'Monthly', 'Yearly', 'Custom Date'], index=1, key='waste_heatmap_granularity'
+            ascending = sort_dir == 'Ascending'
+            if sort_by in summary.columns:
+                summary = summary.sort_values(sort_by, ascending=ascending)
+
+            if 'menu_performance' in summary.columns:
+                with st.container(border=True):
+                    # Maintain order: Keep → Improve → Reconsider
+                    perf_order = ['Keep', 'Improve', 'Reconsider']
+                    dist = summary['menu_performance'].value_counts().reindex(perf_order).fillna(0).reset_index()
+                    dist.columns = ['Performance', 'Count']
+                    fig = px.bar(dist, x='Performance', y='Count',
+                                 color='Performance',
+                                 color_discrete_map=PERF_COLORS,
+                                 text_auto=True,
+                                 category_orders={'Performance': perf_order})
+                    fig.update_layout(
+                        plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+                        showlegend=False, margin=dict(l=0,r=0,t=10,b=0)
                     )
-                with hcolw2:
-                    if 'category' in display_waste.columns:
-                        cats_hm = sorted(display_waste['category'].dropna().unique().tolist())
-                        sel_cat_hm = st.selectbox("Category", ['All'] + cats_hm, key='waste_heatmap_category')
-                    else:
-                        sel_cat_hm = 'All'
-                with hcolw3:
-                    sel_month_hm = 'All months'
-                    wa_heatmap_custom_range = None
-                    if heatmap_granularity == 'Weekly':
-                        _wa_month_opts = ['All months','January','February','March','April','May','June',
-                                       'July','August','September','October','November','December']
-                        sel_month_hm = st.selectbox(
-                            "Month (Week 1-4)", _wa_month_opts, key='waste_heatmap_month'
-                        )
-                    elif heatmap_granularity == 'Custom Date':
-                        wa_heatmap_custom_range = st.date_input(
-                            "Date Range",
-                            value=(display_waste['date'].min().date(), display_waste['date'].max().date()),
-                            min_value=display_waste['date'].min().date(), max_value=display_waste['date'].max().date(),
-                            key='waste_heatmap_customrange'
-                        )
-                with hcolw4:
-                    years_hm = sorted(display_waste['date'].dt.year.dropna().unique(), reverse=True)
-                    sel_year_hm = 'All'
-                    if heatmap_granularity not in ('Yearly', 'Custom Date'):
-                        sel_year_hm = st.selectbox("Year", ['All'] + [str(y) for y in years_hm], key='waste_heatmap_year')
-
-                hmw = display_waste.copy()
-                if sel_cat_hm != 'All':
-                    hmw = hmw[hmw['category'] == sel_cat_hm]
-                if sel_year_hm != 'All':
-                    hmw = hmw[hmw['date'].dt.year == int(sel_year_hm)]
-
-                hmw['day'] = hmw['date'].dt.day_name()
-                if heatmap_granularity == 'Custom Date':
-                    if isinstance(wa_heatmap_custom_range, tuple) and len(wa_heatmap_custom_range) == 2:
-                        hmw = hmw[(hmw['date'].dt.date >= wa_heatmap_custom_range[0]) & (hmw['date'].dt.date <= wa_heatmap_custom_range[1])]
-                    hmw['period'] = hmw['date'].dt.strftime('%b %d, %Y')
-                    x_label = 'Date'
-                elif heatmap_granularity == 'Weekly':
-                    if sel_month_hm != 'All months':
-                        hmw = hmw[hmw['date'].dt.month_name() == sel_month_hm]
-                        hmw['period'] = 'Week ' + (((hmw['date'].dt.day - 1) // 7) + 1).clip(upper=4).astype(str)
-                        x_label = f'Week of {sel_month_hm}'
-                    else:
-                        hmw['period'] = 'Wk ' + hmw['date'].dt.strftime('%V, %Y')
-                        x_label = 'Week'
-                elif heatmap_granularity == 'Yearly':
-                    hmw['period'] = hmw['date'].dt.year.astype(str)
-                    x_label = 'Year'
-                else:
-                    hmw['period'] = hmw['date'].dt.to_period('M').dt.strftime('%b %Y')
-                    x_label = 'Month'
-
-                if len(hmw) == 0:
-                    st.info("No waste records for that month.")
-                else:
-                    pivot_hw = hmw.groupby(['day','period'])['total_waste_cost'].sum().unstack(fill_value=0)
-                    pivot_hw = pivot_hw.reindex([d for d in day_order_w if d in pivot_hw.index])
-                    pivot_hw = pivot_hw[sorted(pivot_hw.columns, key=lambda c: hmw[hmw['period']==c]['date'].min())]
-                    fig = px.imshow(pivot_hw,
-                                    color_continuous_scale=['#FAF6F1','#E8A33D','#B03A2E'],
-                                    aspect='auto',
-                                    labels=dict(x=x_label, y='Day', color='Waste Cost (₱)'))
-                    fig.update_layout(margin=dict(l=0,r=0,t=10,b=0), paper_bgcolor='rgba(0,0,0,0)')
-                    # Force one tick per column — with only a few Yearly/Custom
-                    # columns, Plotly's default tick spacing can otherwise
-                    # land between categories and label it with a fractional
-                    # index (e.g. "2022.5") instead of a real value.
-                    fig.update_xaxes(type='category', dtick=1)
-                    if heatmap_granularity == 'Weekly' and sel_month_hm == 'All months':
-                        fig.update_xaxes(tickangle=-45)
-                    elif heatmap_granularity == 'Custom Date':
-                        fig.update_xaxes(tickangle=-45)
                     st.plotly_chart(fig, use_container_width=True)
 
-                    by_day_wa = pivot_hw.sum(axis=1)
-                    if len(by_day_wa) > 0:
-                        by_day_wa_sorted = by_day_wa.sort_values(ascending=False)
-                        by_day_wa_html = full_breakdown_html(
-                            list(by_day_wa_sorted.items()), prefix='₱', show_pct=False
-                        )
-                        chart_insight(
-                            f"Waste cost by day — {by_day_wa_html}. "
-                            f"<b>{by_day_wa_sorted.index[0]}</b> shows the darkest cells — the highest total "
-                            f"waste cost in this view."
-                        )
+                    total_items_mp = int(dist['Count'].sum())
+                    reconsider_ct = int(dist.loc[dist['Performance']=='Reconsider','Count'].sum())
+                    reconsider_pct = (reconsider_ct / total_items_mp * 100) if total_items_mp else 0
+                    perf_breakdown = full_breakdown_html(
+                        list(zip(dist['Performance'], dist['Count'])), decimals=0
+                    )
+                    chart_insight(
+                        f"Out of <b>{total_items_mp}</b> menu items — {perf_breakdown}. "
+                        f"<b>{reconsider_ct}</b> item(s) ({reconsider_pct:.1f}%) are flagged as "
+                        f"<b>Reconsider</b> — these may need a menu review.",
+                        'warn' if reconsider_pct > 20 else 'info'
+                    )
+
+                st.markdown("")
+
+                # ── Grouped tables by performance label ───────────────────────
+                def _style_perf_col(val):
+                    m = {
+                        'Keep':       'background-color:#E7F3E8;color:#2E7D32;font-weight:600',
+                        'Improve':    'background-color:#FDF1DE;color:#B85C00;font-weight:600',
+                        'Reconsider': 'background-color:#FBEAEA;color:#C62828;font-weight:600',
+                    }
+                    return m.get(val, '')
+
+                for status in perf_order:
+                    group = summary[summary['menu_performance'] == status]
+                    if len(group) == 0:
+                        continue
+                    color = PERF_COLORS[status]
+                    st.markdown(
+                        f"<h4 style='color:{color}'>{status} — {len(group)} items</h4>",
+                        unsafe_allow_html=True
+                    )
+                    # Show min 10 records per group
+                    n_show = max(10, len(group))
+                    group_display = group.head(n_show).copy()
+
+                    fmt_map_mp = {}
+                    if 'total' in group_display.columns:
+                        fmt_map_mp['total'] = '₱{:,.2f}'
+                    if 'profit_margin' in group_display.columns:
+                        fmt_map_mp['profit_margin'] = '{:.1%}'
+                    if 'quantity' in group_display.columns:
+                        fmt_map_mp['quantity'] = '{:,.0f}'
+
+                    styled_group = group_display.style
+                    if 'menu_performance' in group_display.columns:
+                        styled_group = style_map(styled_group, _style_perf_col, subset=['menu_performance'])
+                    if fmt_map_mp:
+                        styled_group = styled_group.format(fmt_map_mp)
+
+                    st.dataframe(styled_group, use_container_width=True, hide_index=True)
+
+            else:
+                # Fallback table if no performance labels yet
+                st.markdown("#### Item Summary")
+                st.info("Run the ML pipeline to see performance classifications.")
+                n_show = st.slider("Records to show", 10, max(11, len(summary)), min(10, len(summary)), 10, key='mp_fallback_n')
+                st.dataframe(summary.head(n_show), use_container_width=True, hide_index=True)
+        else:
+            st.info(
+                "No items to display yet. This summary is calculated from **sales transactions** — "
+                "go to the Import Data page to add your sales log."
+            )
 
         st.markdown("")
 
-        # ── Download — full, unfiltered data ────────────────────────────────
-        csv_out = display_waste.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="Download All Waste Data as CSV",
-            data=csv_out,
-            file_name="waste_data_complete.csv",
-            mime="text/csv"
-        )
+        # ── Spoilage Alert Level by Category (moved here from Forecast & Predictions) ──
+        st.markdown("")
+        with st.container(border=True):
+            st.markdown("### Spoilage Alert Level by Category")
+            st.caption("Today's spoilage risk per category, from the trained spoilage model.")
 
-    else:
-        st.info("No waste data yet. Go to the Import Data page to upload your waste log.")
+            spoil_bundle = models.get('spoilage')
+            waste_for_spoilage = waste_df.copy() if (waste_df is not None and len(waste_df) > 0) else None
 
-elif page == 'Menu Performance':
+            if spoil_bundle is None or waste_for_spoilage is None or 'category' not in waste_for_spoilage.columns or len(waste_for_spoilage) == 0:
+                st.info("Run the prediction models (and upload waste data) to see spoilage alerts here.")
+            else:
+                spoil_cats = sorted(waste_for_spoilage['category'].dropna().unique().tolist())
+                sel_spoil_cat = st.selectbox("Category", ['All'] + spoil_cats, key='mp_spoil_cat')
+                if sel_spoil_cat != 'All':
+                    waste_for_spoilage = waste_for_spoilage[waste_for_spoilage['category'] == sel_spoil_cat]
 
-    st.title("Menu Performance")
-    st.caption("To add or update menu items or sales records, go to the **Import Data** page — all data uploads now happen there.")
+                _today          = pd.Timestamp.now()
+                _today_dow      = _today.dayofweek
+                _today_month    = _today.month
+                _today_quarter  = (_today.month - 1) // 3 + 1
+                _today_week     = _today.isocalendar()[1]
+                _today_is_wknd  = int(_today_dow >= 5)
+                _today_dry      = int(_today.month in [12,1,2,3,4,5])
 
-    PERF_COLORS = {
-        'Keep':       EARTH['success'],
-        'Improve':    EARTH['warning'],
-        'Reconsider': EARTH['danger'],
-    }
+                sf = waste_for_spoilage
+                sf['hour']          = 12
+                sf['day_of_week']   = _today_dow
+                sf['month']         = _today_month
+                sf['quarter']       = _today_quarter
+                sf['week_number']   = _today_week
+                sf['is_weekend']    = _today_is_wknd
+                sf['is_peak_hour']  = 0
+                sf['is_dry_season'] = _today_dry
+                if 'item_name' in sf.columns:
+                    sf['item_encoded'] = pd.factorize(sf['item_name'])[0]
+                if 'cost_per_item' in sf.columns:
+                    sf['price']              = pd.to_numeric(sf['cost_per_item'], errors='coerce').fillna(0) / 0.3
+                    sf['cost']               = pd.to_numeric(sf['cost_per_item'], errors='coerce').fillna(0)
+                    sf['profit_margin']      = 0.7
+                    sf['gross_profit']       = sf['price'] * 0.7
+                    sf['total_cost']         = sf['cost']
+                    sf['revenue']            = sf['price']
+                    sf['transaction_profit'] = sf['price'] * 0.7
+                if 'quantity_wasted' in sf.columns:
+                    sf['quantity']            = pd.to_numeric(sf['quantity_wasted'], errors='coerce').fillna(1)
+                    sf['estimated_waste_qty'] = sf['quantity']
+                    sf['is_high_waste_item']  = (sf['quantity'] > 2).astype(int)
+                if 'total_waste_cost' in sf.columns:
+                    sf['estimated_waste_cost'] = pd.to_numeric(sf['total_waste_cost'], errors='coerce').fillna(0)
+                sf['rolling_7d_avg']  = sf.get('quantity', pd.Series([1]*len(sf)))
+                sf['rolling_30d_avg'] = sf.get('quantity', pd.Series([1]*len(sf)))
+                sf['lag_1d']          = sf.get('quantity', pd.Series([1]*len(sf)))
+                sf['demand_trend']    = 0.0
+                _waste_rate_map = {
+                    'Coffee Based': 0.05, 'Signature Kôfē': 0.06,
+                    'Kôfē Frappé':  0.08, 'Sans Coffee':    0.07, 'Mini Bites': 0.15,
+                }
+                sf['waste_rate'] = sf['category'].map(_waste_rate_map).fillna(0.10)
+                for cat in ['Coffee Based','Kôfē Frappé','Mini Bites','Sans Coffee','Signature Kôfē']:
+                    sf[f'cat_{cat}'] = (sf['category'] == cat).astype(int)
 
-    # ── Compute menu performance LIVE from the DB-first sales_df, instead of
-    # depending on the static Feature_Engineering batch file. This uses the
-    # same Keep/Improve/Reconsider rule as the original ML pipeline
-    # (75th/25th percentile of quantity sold, median profit margin), so it
-    # always reflects whatever is currently in the database.
-    src = sales_df.copy() if sales_df is not None else pd.DataFrame()
-    if len(src) > 0 and {'price', 'cost'}.issubset(src.columns):
-        src['price'] = pd.to_numeric(src['price'], errors='coerce')
-        src['cost']  = pd.to_numeric(src['cost'], errors='coerce')
-
-        # Prefer the REAL per-item cost from the Menu table (DIM_ITEM /
-        # menu_df, kept current via Database → Menu uploads) over each
-        # individual sale's own 'cost' value. A sale's cost is written once,
-        # at the moment that transaction was recorded, and for items with no
-        # real COST at upload time it was filled with a flat 30%-of-price
-        # estimate that stays wrong forever — updating the menu later never
-        # retroactively fixes it. Matching is done on a lowercased/stripped
-        # item name, same as everywhere else in the app.
-        _item_name_col = 'item_name' if 'item_name' in src.columns else \
-                          'item' if 'item' in src.columns else None
-        _menu_matched = pd.Series(False, index=src.index)
-        if _item_name_col and menu_df is not None and len(menu_df) > 0 and \
-           {'item_name', 'cost'}.issubset(menu_df.columns):
-            _menu_ref = menu_df.copy()
-            _menu_ref['_key'] = _menu_ref['item_name'].astype(str).str.strip().str.lower()
-            _menu_ref['cost'] = pd.to_numeric(_menu_ref['cost'], errors='coerce')
-            _menu_cost_by_key = (
-                _menu_ref.dropna(subset=['cost'])
-                         .drop_duplicates('_key', keep='last')
-                         .set_index('_key')['cost']
-            )
-            _src_key = src[_item_name_col].astype(str).str.strip().str.lower()
-            _matched_cost = _src_key.map(_menu_cost_by_key)
-            _menu_matched = _matched_cost.notna()
-            src.loc[_menu_matched, 'cost'] = _matched_cost[_menu_matched]
-
-        # For any item with no Menu match, fall back to the average cost
-        # RATIO (cost ÷ price) of items in the same category that DO have a
-        # real, non-flat cost — more representative than one constant
-        # applied across the whole menu. Falls back to the flat ratio only
-        # when a category has no real-cost items to learn from either.
-        _is_flat_est = (~_menu_matched) & (src['price'] > 0) & \
-                        ((src['cost'] - src['price'] * 0.3).abs() <= 0.01)
-        if 'category' in src.columns and _is_flat_est.any() and (~_is_flat_est).any():
-            _real = src[~_is_flat_est & (src['price'] > 0)]
-            _real_ratio = _real['cost'] / _real['price']
-            _cat_ratio = _real_ratio.groupby(_real['category']).mean()
-            _fallback_ratio = _real_ratio.mean() if len(_real) else 0.3
-            _ratio_for_row = src.loc[_is_flat_est, 'category'].map(_cat_ratio).fillna(_fallback_ratio)
-            src.loc[_is_flat_est, 'cost'] = src.loc[_is_flat_est, 'price'] * _ratio_for_row
-
-        src['profit_margin'] = np.where(src['price'] > 0, (src['price'] - src['cost']) / src['price'], np.nan)
-
-    item_col = 'item' if 'item' in src.columns else \
-               'item_name' if 'item_name' in src.columns else None
-
-    def _mp_apply_filters(base_df, key_prefix):
-        """Renders its own Year/Quarter/Month (Month cascades off Quarter)
-        + Category filter row and returns the filtered dataframe — kept
-        local to each chart so no two visualizations on this page share
-        the same filter controls."""
-        df_f = render_year_quarter_month_filter(base_df, key_prefix, date_col='date') \
-            if 'date' in base_df.columns else base_df.copy()
-        if 'category' in df_f.columns:
-            cats = sorted(df_f['category'].dropna().unique().tolist())
-            sel_cat = st.selectbox("Category", ['All'] + cats, key=f'{key_prefix}_cat')
-            if sel_cat != 'All':
-                df_f = df_f[df_f['category'] == sel_cat]
-        return df_f
-
-    def _mp_build_summary(df_f):
-        """Aggregates a (already-filtered) sales slice into one row per item,
-        with a live Keep/Improve/Reconsider classification."""
-        if not item_col:
-            return pd.DataFrame()
-
-        # Normalize item/category spelling first — inconsistent casing or
-        # whitespace in the uploaded data otherwise splits one item's volume
-        # across multiple rows, and can pick an inconsistent category label.
-        df_f, mp_item_disp, mp_cat_disp = add_normalized_keys(
-            df_f, item_col=item_col, cat_col='category' if 'category' in df_f.columns else None
-        )
-        df_f[item_col] = df_f['_item_key'].map(mp_item_disp)
-        if mp_cat_disp is not None:
-            df_f['category'] = df_f['_cat_key'].map(mp_cat_disp)
-
-        agg_dict = {'quantity': 'sum'} if 'quantity' in df_f.columns else {}
-        if 'total' in df_f.columns:         agg_dict['total'] = 'sum'
-        if 'profit_margin' in df_f.columns: agg_dict['profit_margin'] = 'mean'
-        if 'category' in df_f.columns:      agg_dict['category'] = 'first'
-
-        if agg_dict:
-            s = df_f.groupby(item_col).agg(agg_dict).reset_index()
-        else:
-            s = df_f[item_col].value_counts().reset_index()
-            s.columns = [item_col, 'count']
-
-        if {'quantity', 'profit_margin'}.issubset(s.columns) and len(s) > 0:
-            qty_75    = s['quantity'].quantile(0.75)
-            qty_25    = s['quantity'].quantile(0.25)
-            margin_50 = s['profit_margin'].quantile(0.50)
-
-            def _classify_menu(row):
-                # Classic menu-engineering matrix (popularity × profitability),
-                # mapped onto 3 buckets instead of 4:
-                #   High qty + High margin  → Keep       (a "Star")
-                #   High qty + Low margin   → Improve    (a "Plowhorse" — sells
-                #                              well but needs a cost/price fix)
-                #   Low qty  + High margin  → Improve    (a "Puzzle" — already
-                #                              profitable, just needs more
-                #                              promotion, not removal)
-                #   Low qty  + Low margin   → Reconsider (a "Dog")
-                # A high-margin item used to get flagged as Reconsider purely
-                # for having low volume, even though its margin means it's
-                # worth promoting rather than dropping — this makes margin
-                # matter for low-volume items too, not just quantity.
-                high_qty    = row['quantity'] >= qty_75
-                low_qty     = row['quantity'] < qty_25
-                high_margin = row['profit_margin'] >= margin_50
-                if high_qty and high_margin:
-                    return 'Keep'
-                elif low_qty and not high_margin:
-                    return 'Reconsider'
+                spoil_model    = spoil_bundle['model']
+                spoil_features = [f for f in spoil_bundle['features'] if f in sf.columns]
+                if not spoil_features:
+                    st.info("Spoilage model features unavailable — retrain the model to see this chart.")
                 else:
-                    return 'Improve'
+                    X_spoil = sf[spoil_features].fillna(0)
+                    spoil_preds = spoil_model.predict(X_spoil)
+                    spoil_label_map = {0:'Low', 1:'Medium', 2:'High'}
+                    sf['Alert Level'] = [spoil_label_map.get(int(p), str(p)) for p in spoil_preds]
+                    ALERT_COLORS2 = {'Low': EARTH['success'], 'Medium': EARTH['warning'], 'High': EARTH['danger']}
+                    alert_levels_order = ['Low', 'Medium', 'High']
 
-            s['menu_performance'] = s.apply(_classify_menu, axis=1)
-        return s
+                    # Reindex to every (category, Alert Level) combination —
+                    # even ones with zero records — so Low/Medium/High all
+                    # show in the legend with their color, instead of Plotly
+                    # dropping a level from the legend entirely just because
+                    # no row happens to have it right now.
+                    all_cats_sp = sorted(sf['category'].dropna().unique().tolist())
+                    full_idx = pd.MultiIndex.from_product(
+                        [all_cats_sp, alert_levels_order], names=['category', 'Alert Level']
+                    )
+                    alert_cat = (
+                        sf.groupby(['category', 'Alert Level']).size()
+                        .reindex(full_idx, fill_value=0)
+                        .reset_index(name='Count')
+                    )
+                    fig = px.bar(
+                        alert_cat, x='category', y='Count',
+                        color='Alert Level',
+                        color_discrete_map=ALERT_COLORS2,
+                        barmode='stack',
+                        text_auto=True,
+                        category_orders={'Alert Level': alert_levels_order}
+                    )
+                    fig.update_layout(
+                        plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+                        xaxis_title='Category', yaxis_title='Number of Records',
+                        legend=dict(orientation='h', y=1.1),
+                        margin=dict(l=0,r=0,t=30,b=0)
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
 
-    # ── Performance Distribution — its own filter ───────────────────────────
-    with st.container(border=True):
-        st.markdown("#### Performance Distribution")
-        st.caption("Which items to Keep, Improve, or Reconsider, filtered by period and category.")
-        src_dist = _mp_apply_filters(src, 'mp_dist')
-        summary  = _mp_build_summary(src_dist)
+                    # Per-category breakdown — one line per category showing
+                    # its own Low/Medium/High split, instead of one combined
+                    # "overall" figure that hides how each category differs.
+                    per_cat_lines = []
+                    for cat in all_cats_sp:
+                        cat_counts = (
+                            alert_cat[alert_cat['category'] == cat]
+                            .set_index('Alert Level')['Count']
+                            .reindex(alert_levels_order).fillna(0)
+                        )
+                        cat_html = full_breakdown_html(list(zip(cat_counts.index, cat_counts.values)), decimals=0)
+                        per_cat_lines.append(f"<b>{cat}</b> — {cat_html}")
+                    per_cat_html = "<br/>".join(per_cat_lines)
 
-    st.markdown("")
+                    high_by_cat = sf[sf['Alert Level'] == 'High'].groupby('category').size()
+                    if len(high_by_cat) > 0:
+                        top_alert_cat   = high_by_cat.idxmax()
+                        top_alert_count = int(high_by_cat.max())
+                        st.markdown(f"""
+                        <div style='background:#FFF8F3;border-left:4px solid #6F4E37;
+                                    padding:16px 20px;border-radius:8px;margin-top:8px'>
+                            <b>Alert Level by category:</b><br/>{per_cat_html}<br/><br/>
+                            <b>{top_alert_cat}</b> has the most High Alert items (<b>{top_alert_count} records</b>).
+                            Immediately review ingredient freshness and storage for this category.
+                            Consider adjusting order frequency to reduce spoilage risk.
+                        </div>
+                        """, unsafe_allow_html=True)
+                    else:
+                        st.markdown(f"""
+                        <div style='background:#F0EDE2;border-left:4px solid #6B8E4E;
+                                    padding:16px 20px;border-radius:8px;margin-top:8px'>
+                            <b>Alert Level by category:</b><br/>{per_cat_html}<br/><br/>
+                            <b>Good news!</b> No High Alert items detected.
+                            Current ingredient management is working well.
+                        </div>
+                        """, unsafe_allow_html=True)
 
-    if item_col and len(summary) > 0:
 
-        # ── Sort controls (for the tables below) ────────────────────────
-        sort_options = [c for c in ['quantity','total','profit_margin'] if c in summary.columns]
-        scol1, scol2 = st.columns(2)
-        with scol1:
-            sort_by  = st.selectbox("Sort by", sort_options if sort_options else [item_col], key='mp_sort_by')
-        with scol2:
-            sort_dir = st.selectbox("Order", ['Descending','Ascending'], key='mp_sort_dir')
+# ============================================================================
+# PAGE 3: WASTE & INVENTORY (Waste Analytics + Inventory Status as tabs)
+# ============================================================================
 
-        ascending = sort_dir == 'Ascending'
-        if sort_by in summary.columns:
-            summary = summary.sort_values(sort_by, ascending=ascending)
+elif page == 'Waste & Inventory':
 
-        if 'menu_performance' in summary.columns:
+    st.title("Waste & Inventory")
+    _t0, _t1 = st.tabs(["Waste", "Inventory"])
+
+    with _t0:
+        st.caption("To add new waste records, go to the **Import Data** page — all data uploads now happen there.")
+
+        # ── WASTE DATA FILE PATH — saved in Data_Cleaning folder ─────────────
+        WASTE_FILE = os.path.join(DATA_CLEANING_DIR, 'kofe_tala_waste_data.csv')
+
+        @st.cache_data(ttl=300)
+        def load_waste_data(_path=None):
+            """Load existing waste CSV — cached for fast page switching."""
+            path = _path or WASTE_FILE
+            try:
+                df = pd.read_csv(path)
+                df['date'] = pd.to_datetime(df['date'], errors='coerce')
+                return df
+            except Exception:
+                return pd.DataFrame(columns=[
+                    'date','item_name','category','quantity_wasted',
+                    'waste_reason','cost_per_item','total_waste_cost'
+                ])
+
+        # ── Load existing waste data (CSV fallback when DB isn't available) ────
+        existing_waste = load_waste_data()
+
+        # ── Current Waste Data + Analytics ─────────────────────────
+        # Prefer the same DB-first waste_df used by Dashboard Overview and the
+        # Import Data page, so a delete/edit made on the Import Data page (which only
+        # touches the database, not this CSV) is reflected here immediately too.
+        display_waste = waste_df if db_available() else existing_waste
+
+        if display_waste is not None and len(display_waste) > 0:
+
+            def _wa_apply_filters(base_df, key_prefix, show_reason=True):
+                """Renders the same Year/Quarter/Month (+ Custom Date) filter row
+                used by Transaction KPIs on Sales Analytics and Performance
+                Distribution on Menu Performance, plus a Category select and
+                (optionally) a Waste Reason select — kept local to each chart so
+                no two visualizations on this page share the same filter
+                controls."""
+                df_f = render_year_quarter_month_filter(base_df, key_prefix, date_col='date') \
+                    if 'date' in base_df.columns else base_df.copy()
+                if 'category' in df_f.columns:
+                    cats = sorted(df_f['category'].dropna().unique().tolist())
+                    sel_cat = st.selectbox("Category", ['All'] + cats, key=f'{key_prefix}_cat')
+                    if sel_cat != 'All':
+                        df_f = df_f[df_f['category'] == sel_cat]
+                if show_reason and 'waste_reason' in df_f.columns:
+                    reasons = sorted(df_f['waste_reason'].dropna().unique().tolist())
+                    sel_reason = st.selectbox("Waste Reason", ['All'] + reasons, key=f'{key_prefix}_reason')
+                    if sel_reason != 'All':
+                        df_f = df_f[df_f['waste_reason'] == sel_reason]
+                return df_f
+
+            # ── Waste Summary (KPIs) — boxed, uniform with the Business Summary
+            # box on Sales Analytics and the Performance Distribution box on
+            # Menu Performance ───────────────────────────────────────────────
             with st.container(border=True):
-                # Maintain order: Keep → Improve → Reconsider
-                perf_order = ['Keep', 'Improve', 'Reconsider']
-                dist = summary['menu_performance'].value_counts().reindex(perf_order).fillna(0).reset_index()
-                dist.columns = ['Performance', 'Count']
-                fig = px.bar(dist, x='Performance', y='Count',
-                             color='Performance',
-                             color_discrete_map=PERF_COLORS,
+                st.markdown("### Waste Summary")
+                kpi_waste = _wa_apply_filters(display_waste, 'wa_kpi')
+                st.caption(f"Showing **{len(kpi_waste):,}** of {len(display_waste):,} waste records")
+
+                k1, k2, k3, k4 = st.columns(4)
+                with k1:
+                    total_qty = kpi_waste['quantity_wasted'].sum() if 'quantity_wasted' in kpi_waste.columns else 0
+                    stat_card("Total Units Wasted", f"{int(total_qty):,}")
+                with k2:
+                    total_cost = kpi_waste['total_waste_cost'].sum() if 'total_waste_cost' in kpi_waste.columns else 0
+                    stat_card("Total Waste Cost", f"₱{total_cost:,.2f}")
+                with k3:
+                    n_items = kpi_waste['item_name'].nunique() if 'item_name' in kpi_waste.columns else 0
+                    stat_card("Unique Items Wasted", n_items)
+                with k4:
+                    n_days = kpi_waste['date'].nunique() if 'date' in kpi_waste.columns else 0
+                    stat_card("Days Tracked", n_days)
+
+            st.markdown("")
+
+            # ── Charts ────────────────────────────────────────────────────────
+            # Bar — waste cost by item (top 10) — own filter
+            with st.container(border=True):
+                st.markdown("#### Top 10 Items by Waste Cost")
+                top10_waste = _wa_apply_filters(display_waste, 'wa_top10')
+                if 'item_name' in top10_waste.columns and 'total_waste_cost' in top10_waste.columns and len(top10_waste) > 0:
+                    top10_waste, top10_item_disp, _ = add_normalized_keys(top10_waste, item_col='item_name')
+                    top_items = (
+                        top10_waste.groupby('_item_key')['total_waste_cost']
+                        .sum().nlargest(10).reset_index()
+                    )
+                    top_items['item_name'] = top_items['_item_key'].map(top10_item_disp)
+                    top_items = top_items[['item_name', 'total_waste_cost']]
+                    top_items.columns = ['Item', 'Waste Cost']
+                    fig = px.bar(top_items, x='Waste Cost', y='Item',
+                                 orientation='h',
+                                 color='Waste Cost',
+                                 color_continuous_scale=['#C4A882','#6F4E37'],
+                                 text_auto=',.0f')
+                    fig.update_traces(texttemplate='₱%{x:,.0f}', textposition='outside')
+                    fig.update_layout(
+                        yaxis={'categoryorder':'total ascending'},
+                        plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+                        coloraxis_showscale=False,
+                        xaxis_title='Waste Cost (₱)',
+                        margin=dict(l=0,r=80,t=10,b=0)
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+
+                    top_items_3 = top_items.sort_values('Waste Cost', ascending=False).head(3)
+                    top_items_html = full_breakdown_html(
+                        list(zip(top_items_3['Item'], top_items_3['Waste Cost'])), prefix='₱', show_pct=False
+                    )
+                    chart_insight(
+                        f"Top 3 by waste cost — {top_items_html}. Together, all {len(top_items)} items shown "
+                        f"total <b>₱{top_items['Waste Cost'].sum():,.2f}</b> in this filtered view."
+                    )
+                else:
+                    st.info("No waste records for this filter combination.")
+
+            st.markdown("")
+
+            # Bar — waste by reason — own filter (no Reason filter here, chart IS the reason breakdown)
+            with st.container(border=True):
+                st.markdown("#### Waste by Reason")
+                reason_waste = _wa_apply_filters(display_waste, 'wa_reason', show_reason=False)
+                if 'waste_reason' in reason_waste.columns and 'total_waste_cost' in reason_waste.columns and len(reason_waste) > 0:
+                    reason = (
+                        reason_waste.groupby('waste_reason')['total_waste_cost']
+                        .sum().sort_values().reset_index()
+                    )
+                    reason.columns = ['Reason', 'Waste Cost']
+                    reason_colors = {
+                        'Over-preparation': EARTH['accent'],
+                        'Over-prepared':    EARTH['accent'],
+                        'Spoilage':         EARTH['danger'],
+                        'Spoiled':          EARTH['danger'],
+                        'Expired':          '#5D4037',
+                        'Quality issue':    EARTH['warning'],
+                    }
+                    fig = px.bar(reason, x='Waste Cost', y='Reason',
+                                 orientation='h',
+                                 color='Reason',
+                                 color_discrete_map=reason_colors,
+                                 text_auto=',.0f')
+                    fig.update_traces(texttemplate='₱%{x:,.0f}', textposition='outside')
+                    fig.update_layout(
+                        plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+                        showlegend=False,
+                        xaxis_title='Waste Cost (₱)',
+                        margin=dict(l=0,r=80,t=10,b=0)
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+
+                    reason_sorted = reason.sort_values('Waste Cost', ascending=False)
+                    reason_breakdown = full_breakdown_html(
+                        list(zip(reason_sorted['Reason'], reason_sorted['Waste Cost'])), prefix='₱'
+                    )
+                    chart_insight(
+                        f"Waste cost by reason — {reason_breakdown}. "
+                        f"<b>{reason_sorted.iloc[0]['Reason']}</b> is the leading cause of waste in this view."
+                    )
+
+            st.markdown("")
+
+            # Waste trend — its own filter (granularity + category + time period)
+            with st.container(border=True):
+                st.markdown("#### Waste Cost Trend")
+                trend_waste = _wa_apply_filters(display_waste, 'wa_trend', show_reason=False)
+                if 'date' in trend_waste.columns and 'total_waste_cost' in trend_waste.columns and len(trend_waste) > 0:
+                    wtc1, wtc2 = st.columns([1, 2])
+                    with wtc1:
+                        trend_granularity = st.selectbox(
+                            "View by", ['Daily', 'Weekly', 'Monthly', 'Custom Date'], index=2, key='waste_trend_granularity'
+                        )
+                    with wtc2:
+                        if trend_granularity == 'Custom Date':
+                            wa_trend_custom_range = st.date_input(
+                                "Date Range",
+                                value=(trend_waste['date'].min().date(), trend_waste['date'].max().date()),
+                                min_value=trend_waste['date'].min().date(), max_value=trend_waste['date'].max().date(),
+                                key='wa_trend_customrange'
+                            )
+                        else:
+                            st.empty()
+
+                    twaste = trend_waste.copy()
+
+                    if trend_granularity == 'Custom Date':
+                        if isinstance(wa_trend_custom_range, tuple) and len(wa_trend_custom_range) == 2:
+                            twaste = twaste[(twaste['date'].dt.date >= wa_trend_custom_range[0]) & (twaste['date'].dt.date <= wa_trend_custom_range[1])]
+                        twaste['period'] = twaste['date'].dt.date
+                        ma_window = 7
+                    elif trend_granularity == 'Daily':
+                        twaste['period'] = twaste['date'].dt.date
+                        ma_window = 7
+                    elif trend_granularity == 'Weekly':
+                        twaste['period'] = twaste['date'].dt.to_period('W').dt.start_time
+                        ma_window = 4
+                    else:
+                        twaste['period'] = twaste['date'].dt.to_period('M').dt.to_timestamp()
+                        ma_window = 3
+
+                    daily = twaste.groupby('period')['total_waste_cost'].sum().reset_index()
+                    daily.columns = ['date', 'waste_cost']
+                    daily[f'{ma_window}-period avg'] = daily['waste_cost'].rolling(ma_window, min_periods=1).mean()
+
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(
+                        x=daily['date'], y=daily['waste_cost'],
+                        name=f'{trend_granularity} Waste Cost',
+                        mode='lines+markers',
+                        line=dict(color=EARTH['light'], width=1.5)
+                    ))
+                    fig.add_trace(go.Scatter(
+                        x=daily['date'], y=daily[f'{ma_window}-period avg'],
+                        name=f'{ma_window}-period Average',
+                        line=dict(color=EARTH['primary'], width=2.5),
+                        mode='lines'
+                    ))
+                    fig.update_layout(
+                        plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+                        yaxis=dict(tickprefix='₱', tickformat=',.0f'),
+                        legend=dict(orientation='h', y=1.1),
+                        margin=dict(l=0,r=0,t=10,b=0)
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+
+                    if len(daily) >= 2:
+                        trend_dir_wa = "rising" if daily[f'{ma_window}-period avg'].iloc[-1] > daily[f'{ma_window}-period avg'].iloc[0] else "falling"
+                        peak_row_wa = daily.loc[daily['waste_cost'].idxmax()]
+                        low_row_wa  = daily.loc[daily['waste_cost'].idxmin()]
+                        chart_insight(
+                            f"The waste cost trend is <b>{trend_dir_wa}</b> over this range ({len(daily)} "
+                            f"{trend_granularity.lower()} periods). Latest {ma_window}-period average: "
+                            f"<b>₱{daily[f'{ma_window}-period avg'].iloc[-1]:,.2f}</b>. The highest single period was "
+                            f"<b>₱{peak_row_wa['waste_cost']:,.2f}</b> "
+                            f"({pd.to_datetime(peak_row_wa['date']).strftime('%Y-%m-%d')}), the lowest was "
+                            f"<b>₱{low_row_wa['waste_cost']:,.2f}</b> "
+                            f"({pd.to_datetime(low_row_wa['date']).strftime('%Y-%m-%d')}), and the overall "
+                            f"average was <b>₱{daily['waste_cost'].mean():,.2f}</b> per {trend_granularity.lower()[:-2]}.",
+                            'warn' if trend_dir_wa == 'rising' else 'good'
+                        )
+                else:
+                    st.info("No waste records for this filter combination.")
+
+            st.markdown("")
+
+            # ── Waste by Day of Week — which day wastes the most — own filter ──
+            with st.container(border=True):
+                st.markdown("#### Waste by Day of Week")
+                dow_waste_src = _wa_apply_filters(display_waste, 'wa_dow')
+                if 'date' in dow_waste_src.columns and 'total_waste_cost' in dow_waste_src.columns and len(dow_waste_src) > 0:
+                    day_order_w = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']
+                    dw = dow_waste_src.copy()
+                    dw['day'] = dw['date'].dt.day_name()
+                    dow_waste = dw.groupby('day')['total_waste_cost'].sum().reindex(day_order_w).fillna(0).reset_index()
+                    dow_waste.columns = ['Day', 'Waste Cost']
+                    worst_day_idx = dow_waste['Waste Cost'].idxmax()
+                    bar_colors = [EARTH['danger'] if i == worst_day_idx else EARTH['light']
+                                  for i in range(len(dow_waste))]
+                    fig = px.bar(dow_waste, x='Day', y='Waste Cost', text_auto=',.0f')
+                    fig.update_traces(marker_color=bar_colors, texttemplate='₱%{y:,.0f}', textposition='outside')
+                    fig.update_layout(
+                        plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+                        yaxis=dict(tickprefix='₱', tickformat=',.0f'),
+                        margin=dict(l=0,r=0,t=10,b=0)
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                    dow_waste_sorted = dow_waste.sort_values('Waste Cost', ascending=False)
+                    dow_waste_html = full_breakdown_html(
+                        list(zip(dow_waste_sorted['Day'], dow_waste_sorted['Waste Cost'])), prefix='₱'
+                    )
+                    chart_insight(
+                        f"Waste cost by day of week — {dow_waste_html}. "
+                        f"<b>{dow_waste.loc[worst_day_idx,'Day']}</b> has the highest waste cost — "
+                        f"consider adjusting prep quantities on that day.",
+                        'warn'
+                    )
+                else:
+                    st.info("No waste records for this filter combination.")
+
+            st.markdown("")
+
+            st.markdown("")
+
+            # ── Download — full, unfiltered data ────────────────────────────────
+            csv_out = display_waste.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="Download All Waste Data as CSV",
+                data=csv_out,
+                file_name="waste_data_complete.csv",
+                mime="text/csv"
+            )
+
+        else:
+            st.info("No waste data yet. Go to the Import Data page to upload your waste log.")
+
+    with _t1:
+        st.caption("To add new inventory records, go to the **Import Data** page — all data uploads now happen there.")
+
+        # Alert level colors (renamed from Risk)
+        ALERT_COLORS = {
+            'High Alert':   EARTH['danger'],
+            'Medium Alert': EARTH['warning'],
+            'Low Alert':    EARTH['success'],
+            'Expired':      '#4E342E',
+            'Out of Stock': '#8D6E63',   # muted mocha — distinct from other levels
+        }
+
+        if inventory_df is not None and len(inventory_df) > 0:
+            inv_hist = inventory_df.copy()
+
+            # ── Rename "Risk" → "Alert Level" ────────────────────────────────
+            if 'spoilage_risk' in inv_hist.columns:
+                inv_hist['alert_level'] = inv_hist['spoilage_risk'].replace({
+                    'High Risk':   'High Alert',
+                    'Medium Risk': 'Medium Alert',
+                    'Low Risk':    'Low Alert',
+                    'Expired':     'Expired',
+                })
+            elif 'alert_level' not in inv_hist.columns:
+                inv_hist['alert_level'] = 'Low Alert'
+
+            # ── Mark Out of Stock — quantity = 0 ─────────────────────────────
+            if 'quantity' in inv_hist.columns:
+                inv_hist.loc[inv_hist['quantity'] <= 0, 'alert_level'] = 'Out of Stock'
+
+            if 'purchase_date' in inv_hist.columns:
+                inv_hist['purchase_date'] = pd.to_datetime(inv_hist['purchase_date'], errors='coerce')
+
+            # ── "Current" snapshot — most recent 30 days of purchases ─────────
+            # (inventory now holds 3 years of history for trend purposes; KPIs /
+            # alert levels below should reflect what's actually on hand today)
+            if 'purchase_date' in inv_hist.columns:
+                cutoff = inv_hist['purchase_date'].max() - pd.Timedelta(days=30)
+                inv = inv_hist[inv_hist['purchase_date'] >= cutoff].copy()
+            else:
+                inv = inv_hist.copy()
+
+            # ── Summary badges ────────────────────────────────────────────────
+            st.caption("Snapshot of the most recent 30 days of purchases. Full 3-year history is available in the 'Inventory Value Over Time' chart below.")
+            alert_order = ['High Alert','Medium Alert','Low Alert','Expired','Out of Stock']
+            alert_counts = inv['alert_level'].value_counts()
+
+            cols = st.columns(len(alert_order))
+            for i, level in enumerate(alert_order):
+                count = alert_counts.get(level, 0)
+                color = ALERT_COLORS.get(level, '#333')
+                with cols[i]:
+                    st.markdown(
+                        f"<div style='background:{color};color:white;padding:14px;"
+                        f"border-radius:10px;text-align:center;'>"
+                        f"<b style='font-size:13px'>{level}</b><br>"
+                        f"<span style='font-size:28px;font-weight:bold'>{count}</span>"
+                        f"</div>",
+                        unsafe_allow_html=True
+                    )
+
+            st.markdown("")
+            st.markdown("---")
+
+            # ── Alert level filter — now actually applied below (previously the
+            # filtered result was computed but never used by any table) ───────
+            filter_level = st.selectbox(
+                "Filter by Alert Level",
+                ['All'] + alert_order,
+                key='inv_filter_level'
+            )
+            inv_filtered = inv if filter_level == 'All' else inv[inv['alert_level'] == filter_level]
+
+            # ── Inventory Records table — the main filterable, row-level view ──
+            with st.container(border=True):
+                st.markdown("#### Inventory Records")
+                st.caption(
+                    "Purchase Date and Expiry Date are shown side by side. Expired items are marked "
+                    "**Discard** in the Action column; Out of Stock items are marked **Restock**."
+                )
+                if len(inv_filtered) == 0:
+                    st.info("No inventory records match this filter.")
+                else:
+                    inv_table = inv_filtered.copy()
+
+                    # Discard/Restock action column, derived from Alert Level
+                    def _inv_action(level):
+                        if level == 'Expired':
+                            return 'Discard'
+                        if level == 'Out of Stock':
+                            return 'Restock'
+                        return '—'
+                    inv_table['Action'] = inv_table['alert_level'].apply(_inv_action)
+
+                    # Clean date columns — strip the 00:00:00 time component that
+                    # a plain Timestamp/string otherwise renders in a dataframe.
+                    if 'purchase_date' in inv_table.columns:
+                        inv_table['Purchase Date'] = pd.to_datetime(inv_table['purchase_date'], errors='coerce').dt.strftime('%Y-%m-%d')
+                    if 'expiration_date' in inv_table.columns:
+                        inv_table['Expiry Date'] = pd.to_datetime(
+                            inv_table['expiration_date'].astype(str).str.split(' ').str[0], errors='coerce'
+                        ).dt.strftime('%Y-%m-%d')
+
+                    rename_map = {
+                        'ingredient': 'Ingredient', 'quantity': 'Quantity', 'unit': 'Unit',
+                        'cost_per_unit': 'Cost per Unit', 'total_cost': 'Total Cost',
+                        'alert_level': 'Alert Level',
+                    }
+                    inv_table = inv_table.rename(columns=rename_map)
+
+                    # Sort most urgent first by default: High Alert / Expired /
+                    # Out of Stock rows surface at the top even when the filter
+                    # is left on 'All', with soonest-to-expire first within a level.
+                    _urgency_rank = {'High Alert': 0, 'Expired': 1, 'Out of Stock': 2, 'Medium Alert': 3, 'Low Alert': 4}
+                    inv_table['_urgency'] = inv_table['Alert Level'].map(_urgency_rank).fillna(9)
+                    sort_cols = ['_urgency'] + (['expiration_date'] if 'expiration_date' in inv_table.columns else [])
+                    inv_table = inv_table.sort_values(sort_cols).drop(columns=['_urgency'])
+
+                    # Column order: Purchase Date + Expiry Date side by side;
+                    # inventory_key, shelf_life_days, days_until_expiration are
+                    # dropped entirely (internal/derived fields, not useful here).
+                    display_cols = [c for c in [
+                        'Ingredient', 'Purchase Date', 'Expiry Date', 'Quantity', 'Unit',
+                        'Cost per Unit', 'Total Cost', 'Alert Level', 'Action'
+                    ] if c in inv_table.columns]
+                    inv_table = inv_table[display_cols]
+
+                    # Color-code the Alert Level column the same way the Menu
+                    # Performance page colors its Keep/Improve/Reconsider column.
+                    def _style_alert_col(val):
+                        m = {
+                            'High Alert':   'background-color:#FBEAEA;color:#C62828;font-weight:600',
+                            'Medium Alert': 'background-color:#FDF1DE;color:#B85C00;font-weight:600',
+                            'Low Alert':    'background-color:#E7F3E8;color:#2E7D32;font-weight:600',
+                            'Expired':      'background-color:#E8DCD8;color:#4E342E;font-weight:600',
+                            'Out of Stock': 'background-color:#EFE6E0;color:#6D4C41;font-weight:600',
+                        }
+                        return m.get(val, '')
+
+                    def _style_action_col(val):
+                        if val == 'Discard':
+                            return 'background-color:#FBEAEA;color:#C62828;font-weight:600'
+                        if val == 'Restock':
+                            return 'background-color:#FDF1DE;color:#B85C00;font-weight:600'
+                        return ''
+
+                    fmt_map_inv = {}
+                    if 'Cost per Unit' in inv_table.columns: fmt_map_inv['Cost per Unit'] = '₱{:,.2f}'
+                    if 'Total Cost' in inv_table.columns:    fmt_map_inv['Total Cost']    = '₱{:,.2f}'
+                    if 'Quantity' in inv_table.columns:      fmt_map_inv['Quantity']      = '{:,.1f}'
+
+                    styled_inv = inv_table.style
+                    if 'Alert Level' in inv_table.columns:
+                        styled_inv = style_map(styled_inv, _style_alert_col, subset=['Alert Level'])
+                    if 'Action' in inv_table.columns:
+                        styled_inv = style_map(styled_inv, _style_action_col, subset=['Action'])
+                    if fmt_map_inv:
+                        styled_inv = styled_inv.format(fmt_map_inv)
+
+                    st.dataframe(styled_inv, use_container_width=True, hide_index=True)
+
+            st.markdown("")
+
+            # ── Inventory Guide — what to restock this week/day ────────────────
+            with st.container(border=True):
+                st.markdown("#### Inventory Guide")
+                st.caption("What to restock now, what to restock this week, and what's well stocked — based on each ingredient's latest purchase record.")
+
+                if 'ingredient' in inv_hist.columns and 'purchase_date' in inv_hist.columns:
+                    latest_per_ing = (
+                        inv_hist.dropna(subset=['purchase_date'])
+                        .sort_values('purchase_date')
+                        .drop_duplicates(subset='ingredient', keep='last')
+                        .copy()
+                    )
+
+                    restock_now  = latest_per_ing[latest_per_ing['alert_level'].isin(['Out of Stock', 'Expired'])]
+                    restock_soon = latest_per_ing[latest_per_ing['alert_level'].isin(['High Alert', 'Medium Alert'])]
+                    well_stocked = latest_per_ing[latest_per_ing['alert_level'] == 'Low Alert']
+
+                    def _guide_col(df_g, color, empty_msg, show_reason=False):
+                        if len(df_g) == 0:
+                            st.caption(empty_msg)
+                            return
+                        rows = df_g.sort_values('quantity') if 'quantity' in df_g.columns else df_g
+                        for _, r in rows.iterrows():
+                            qty_txt = ""
+                            if 'quantity' in df_g.columns and pd.notna(r['quantity']):
+                                unit_txt = str(r['unit']) if 'unit' in df_g.columns and pd.notna(r.get('unit')) else ''
+                                qty_txt = f" — {r['quantity']:.0f} {unit_txt} left".rstrip()
+                            reason_txt = ""
+                            if show_reason and 'alert_level' in df_g.columns and pd.notna(r.get('alert_level')):
+                                reason_txt = f" <span style='color:#8A7460;font-size:11.5px'>({r['alert_level']})</span>"
+                            st.markdown(
+                                f"<div style='padding:7px 12px;border-left:3px solid {color};"
+                                f"margin-bottom:4px;font-size:13.5px;color:#3E2723'>"
+                                f"{r['ingredient']}{qty_txt}{reason_txt}</div>",
+                                unsafe_allow_html=True
+                            )
+
+                    g1, g2, g3 = st.columns(3)
+                    with g1:
+                        st.markdown(
+                            "<div style='background:#C62828;color:white;padding:8px 14px;"
+                            "border-radius:8px;text-align:center;font-weight:bold;"
+                            "font-size:13px;margin-bottom:10px'>RESTOCK NOW</div>",
+                            unsafe_allow_html=True
+                        )
+                        _guide_col(restock_now, '#C62828', "Nothing out of stock or expired right now.", show_reason=True)
+                    with g2:
+                        st.markdown(
+                            "<div style='background:#B85C00;color:white;padding:8px 14px;"
+                            "border-radius:8px;text-align:center;font-weight:bold;"
+                            "font-size:13px;margin-bottom:10px'>RESTOCK THIS WEEK</div>",
+                            unsafe_allow_html=True
+                        )
+                        _guide_col(restock_soon, '#B85C00', "Nothing needs restocking this week.")
+                    with g3:
+                        st.markdown(
+                            "<div style='background:#2E7D32;color:white;padding:8px 14px;"
+                            "border-radius:8px;text-align:center;font-weight:bold;"
+                            "font-size:13px;margin-bottom:10px'>WELL STOCKED</div>",
+                            unsafe_allow_html=True
+                        )
+                        _guide_col(well_stocked, '#2E7D32', "No ingredients marked as well stocked yet.")
+
+                    st.markdown("")
+                    chart_insight(
+                        f"<b>{len(restock_now)}</b> ingredient(s) need restocking right now, "
+                        f"<b>{len(restock_soon)}</b> should be reordered this week, and "
+                        f"<b>{len(well_stocked)}</b> are currently well stocked. "
+                        "To add a brand-new ingredient that isn't tracked yet, upload it on the Import Data page — "
+                        "it will show up here once it has a purchase record."
+                    )
+                else:
+                    st.info("Not enough inventory history to build a restock guide yet.")
+
+            st.markdown("")
+
+            # ── Bar chart — inventory by alert level ──────────────────────────
+            with st.container(border=True):
+                st.markdown("#### Inventory Alert Level Distribution")
+                dist = inv['alert_level'].value_counts().reindex(alert_order).fillna(0).reset_index()
+                dist.columns = ['Alert Level', 'Count']
+                fig = px.bar(dist, x='Alert Level', y='Count',
+                             color='Alert Level',
+                             color_discrete_map=ALERT_COLORS,
                              text_auto=True,
-                             category_orders={'Performance': perf_order})
+                             category_orders={'Alert Level': alert_order})
                 fig.update_layout(
                     plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
                     showlegend=False, margin=dict(l=0,r=0,t=10,b=0)
                 )
                 st.plotly_chart(fig, use_container_width=True)
 
-                total_items_mp = int(dist['Count'].sum())
-                reconsider_ct = int(dist.loc[dist['Performance']=='Reconsider','Count'].sum())
-                reconsider_pct = (reconsider_ct / total_items_mp * 100) if total_items_mp else 0
-                perf_breakdown = full_breakdown_html(
-                    list(zip(dist['Performance'], dist['Count'])), decimals=0
+                high_ct = int(dist.loc[dist['Alert Level']=='High Alert','Count'].sum())
+                alert_dist_sorted = dist[dist['Count'] > 0].sort_values('Count', ascending=False)
+                alert_dist_html = full_breakdown_html(
+                    list(zip(alert_dist_sorted['Alert Level'], alert_dist_sorted['Count'])), decimals=0
                 )
-                chart_insight(
-                    f"Out of <b>{total_items_mp}</b> menu items — {perf_breakdown}. "
-                    f"<b>{reconsider_ct}</b> item(s) ({reconsider_pct:.1f}%) are flagged as "
-                    f"<b>Reconsider</b> — these may need a menu review.",
-                    'warn' if reconsider_pct > 20 else 'info'
-                )
+                if high_ct > 0:
+                    chart_insight(f"Inventory by alert level — {alert_dist_html}. "
+                                  f"<b>{high_ct}</b> item(s) are at High Alert and need urgent attention.", 'warn')
+                else:
+                    chart_insight(f"Inventory by alert level — {alert_dist_html}. "
+                                  f"No items are currently at High Alert. Current ingredient management is working well.", 'good')
 
             st.markdown("")
 
-            # ── Grouped tables by performance label ───────────────────────
-            def _style_perf_col(val):
-                m = {
-                    'Keep':       'background-color:#E7F3E8;color:#2E7D32;font-weight:600',
-                    'Improve':    'background-color:#FDF1DE;color:#B85C00;font-weight:600',
-                    'Reconsider': 'background-color:#FBEAEA;color:#C62828;font-weight:600',
-                }
-                return m.get(val, '')
-
-            for status in perf_order:
-                group = summary[summary['menu_performance'] == status]
-                if len(group) == 0:
-                    continue
-                color = PERF_COLORS[status]
-                st.markdown(
-                    f"<h4 style='color:{color}'>{status} — {len(group)} items</h4>",
-                    unsafe_allow_html=True
-                )
-                # Show min 10 records per group
-                n_show = max(10, len(group))
-                group_display = group.head(n_show).copy()
-
-                fmt_map_mp = {}
-                if 'total' in group_display.columns:
-                    fmt_map_mp['total'] = '₱{:,.2f}'
-                if 'profit_margin' in group_display.columns:
-                    fmt_map_mp['profit_margin'] = '{:.1%}'
-                if 'quantity' in group_display.columns:
-                    fmt_map_mp['quantity'] = '{:,.0f}'
-
-                styled_group = group_display.style
-                if 'menu_performance' in group_display.columns:
-                    styled_group = style_map(styled_group, _style_perf_col, subset=['menu_performance'])
-                if fmt_map_mp:
-                    styled_group = styled_group.format(fmt_map_mp)
-
-                st.dataframe(styled_group, use_container_width=True, hide_index=True)
-
-        else:
-            # Fallback table if no performance labels yet
-            st.markdown("#### Item Summary")
-            st.info("Run the ML pipeline to see performance classifications.")
-            n_show = st.slider("Records to show", 10, max(11, len(summary)), min(10, len(summary)), 10, key='mp_fallback_n')
-            st.dataframe(summary.head(n_show), use_container_width=True, hide_index=True)
-    else:
-        st.info(
-            "No items to display yet. This summary is calculated from **sales transactions** — "
-            "go to the Import Data page to add your sales log."
-        )
-
-    st.markdown("")
-
-    # ── Profitability by Item (Top 20) — its own, separate filter ──────────
-    with st.container(border=True):
-        st.markdown("#### Profitability by Item (Top 20)")
-        st.caption("Top revenue-generating items, filtered by period and category independently of the chart above.")
-        src_profit = _mp_apply_filters(src, 'mp_profit')
-        summary_profit = _mp_build_summary(src_profit)
-
-        if item_col and 'total' in summary_profit.columns and len(summary_profit) > 0:
-            summary_profit['total'] = pd.to_numeric(summary_profit['total'], errors='coerce')
-            top20 = summary_profit.dropna(subset=['total']).nlargest(20, 'total')
-            fig = px.bar(top20, x='total', y=item_col, orientation='h',
-                         color='total',
-                         color_continuous_scale=['#C4A882','#6F4E37'],
-                         text_auto='.2s',
-                         labels={'total':'Revenue (₱)', item_col:'Item'})
-            fig.update_layout(
-                yaxis={'categoryorder':'total ascending'},
-                plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                coloraxis_showscale=False,
-                margin=dict(l=0,r=0,t=10,b=0)
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
-            top20_sorted = top20.sort_values('total', ascending=False)
-            top5_profit = top20_sorted.head(5)
-            top5_profit_html = full_breakdown_html(
-                list(zip(top5_profit[item_col], top5_profit['total'])), prefix='₱', show_pct=False
-            )
-            chart_insight(
-                f"Top 5 by revenue — {top5_profit_html}. Together, all {len(top20)} items shown here "
-                f"total <b>₱{top20['total'].sum():,.2f}</b> in this filtered view."
-            )
-        else:
-            st.info("No revenue data for this filter combination yet.")
-
-    # ── Spoilage Alert Level by Category (moved here from Forecast & Predictions) ──
-    st.markdown("")
-    with st.container(border=True):
-        st.markdown("### Spoilage Alert Level by Category")
-        st.caption("Today's spoilage risk per category, from the trained spoilage model.")
-
-        spoil_bundle = models.get('spoilage')
-        waste_for_spoilage = waste_df.copy() if (waste_df is not None and len(waste_df) > 0) else None
-
-        if spoil_bundle is None or waste_for_spoilage is None or 'category' not in waste_for_spoilage.columns or len(waste_for_spoilage) == 0:
-            st.info("Run the prediction models (and upload waste data) to see spoilage alerts here.")
-        else:
-            spoil_cats = sorted(waste_for_spoilage['category'].dropna().unique().tolist())
-            sel_spoil_cat = st.selectbox("Category", ['All'] + spoil_cats, key='mp_spoil_cat')
-            if sel_spoil_cat != 'All':
-                waste_for_spoilage = waste_for_spoilage[waste_for_spoilage['category'] == sel_spoil_cat]
-
-            _today          = pd.Timestamp.now()
-            _today_dow      = _today.dayofweek
-            _today_month    = _today.month
-            _today_quarter  = (_today.month - 1) // 3 + 1
-            _today_week     = _today.isocalendar()[1]
-            _today_is_wknd  = int(_today_dow >= 5)
-            _today_dry      = int(_today.month in [12,1,2,3,4,5])
-
-            sf = waste_for_spoilage
-            sf['hour']          = 12
-            sf['day_of_week']   = _today_dow
-            sf['month']         = _today_month
-            sf['quarter']       = _today_quarter
-            sf['week_number']   = _today_week
-            sf['is_weekend']    = _today_is_wknd
-            sf['is_peak_hour']  = 0
-            sf['is_dry_season'] = _today_dry
-            if 'item_name' in sf.columns:
-                sf['item_encoded'] = pd.factorize(sf['item_name'])[0]
-            if 'cost_per_item' in sf.columns:
-                sf['price']              = pd.to_numeric(sf['cost_per_item'], errors='coerce').fillna(0) / 0.3
-                sf['cost']               = pd.to_numeric(sf['cost_per_item'], errors='coerce').fillna(0)
-                sf['profit_margin']      = 0.7
-                sf['gross_profit']       = sf['price'] * 0.7
-                sf['total_cost']         = sf['cost']
-                sf['revenue']            = sf['price']
-                sf['transaction_profit'] = sf['price'] * 0.7
-            if 'quantity_wasted' in sf.columns:
-                sf['quantity']            = pd.to_numeric(sf['quantity_wasted'], errors='coerce').fillna(1)
-                sf['estimated_waste_qty'] = sf['quantity']
-                sf['is_high_waste_item']  = (sf['quantity'] > 2).astype(int)
-            if 'total_waste_cost' in sf.columns:
-                sf['estimated_waste_cost'] = pd.to_numeric(sf['total_waste_cost'], errors='coerce').fillna(0)
-            sf['rolling_7d_avg']  = sf.get('quantity', pd.Series([1]*len(sf)))
-            sf['rolling_30d_avg'] = sf.get('quantity', pd.Series([1]*len(sf)))
-            sf['lag_1d']          = sf.get('quantity', pd.Series([1]*len(sf)))
-            sf['demand_trend']    = 0.0
-            _waste_rate_map = {
-                'Coffee Based': 0.05, 'Signature Kôfē': 0.06,
-                'Kôfē Frappé':  0.08, 'Sans Coffee':    0.07, 'Mini Bites': 0.15,
-            }
-            sf['waste_rate'] = sf['category'].map(_waste_rate_map).fillna(0.10)
-            for cat in ['Coffee Based','Kôfē Frappé','Mini Bites','Sans Coffee','Signature Kôfē']:
-                sf[f'cat_{cat}'] = (sf['category'] == cat).astype(int)
-
-            spoil_model    = spoil_bundle['model']
-            spoil_features = [f for f in spoil_bundle['features'] if f in sf.columns]
-            if not spoil_features:
-                st.info("Spoilage model features unavailable — retrain the model to see this chart.")
-            else:
-                X_spoil = sf[spoil_features].fillna(0)
-                spoil_preds = spoil_model.predict(X_spoil)
-                spoil_label_map = {0:'Low', 1:'Medium', 2:'High'}
-                sf['Alert Level'] = [spoil_label_map.get(int(p), str(p)) for p in spoil_preds]
-                ALERT_COLORS2 = {'Low': EARTH['success'], 'Medium': EARTH['warning'], 'High': EARTH['danger']}
-                alert_levels_order = ['Low', 'Medium', 'High']
-
-                # Reindex to every (category, Alert Level) combination —
-                # even ones with zero records — so Low/Medium/High all
-                # show in the legend with their color, instead of Plotly
-                # dropping a level from the legend entirely just because
-                # no row happens to have it right now.
-                all_cats_sp = sorted(sf['category'].dropna().unique().tolist())
-                full_idx = pd.MultiIndex.from_product(
-                    [all_cats_sp, alert_levels_order], names=['category', 'Alert Level']
-                )
-                alert_cat = (
-                    sf.groupby(['category', 'Alert Level']).size()
-                    .reindex(full_idx, fill_value=0)
-                    .reset_index(name='Count')
-                )
-                fig = px.bar(
-                    alert_cat, x='category', y='Count',
-                    color='Alert Level',
-                    color_discrete_map=ALERT_COLORS2,
-                    barmode='stack',
-                    text_auto=True,
-                    category_orders={'Alert Level': alert_levels_order}
-                )
-                fig.update_layout(
-                    plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                    xaxis_title='Category', yaxis_title='Number of Records',
-                    legend=dict(orientation='h', y=1.1),
-                    margin=dict(l=0,r=0,t=30,b=0)
-                )
-                st.plotly_chart(fig, use_container_width=True)
-
-                # Per-category breakdown — one line per category showing
-                # its own Low/Medium/High split, instead of one combined
-                # "overall" figure that hides how each category differs.
-                per_cat_lines = []
-                for cat in all_cats_sp:
-                    cat_counts = (
-                        alert_cat[alert_cat['category'] == cat]
-                        .set_index('Alert Level')['Count']
-                        .reindex(alert_levels_order).fillna(0)
+            # ── Additional graphs ────────────────────────────────────────────
+            with st.container(border=True):
+                st.markdown("#### Inventory Value by Ingredient (Top 10)")
+                if 'ingredient' in inv.columns and 'total_cost' in inv.columns:
+                    val_by_ing = (
+                        inv.groupby('ingredient')['total_cost']
+                        .sum().nlargest(10).reset_index()
                     )
-                    cat_html = full_breakdown_html(list(zip(cat_counts.index, cat_counts.values)), decimals=0)
-                    per_cat_lines.append(f"<b>{cat}</b> — {cat_html}")
-                per_cat_html = "<br/>".join(per_cat_lines)
+                    val_by_ing.columns = ['Ingredient', 'Value']
+                    fig2 = px.bar(val_by_ing, x='Value', y='Ingredient', orientation='h',
+                                  color='Value', color_continuous_scale=['#C4A882', '#6F4E37'],
+                                  text_auto=',.0f')
+                    fig2.update_traces(texttemplate='₱%{x:,.0f}', textposition='outside')
+                    fig2.update_layout(
+                        yaxis={'categoryorder': 'total ascending'},
+                        plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+                        coloraxis_showscale=False, xaxis_title='Inventory Value (₱)',
+                        margin=dict(l=0, r=80, t=10, b=0)
+                    )
+                    st.plotly_chart(fig2, use_container_width=True)
 
-                high_by_cat = sf[sf['Alert Level'] == 'High'].groupby('category').size()
-                if len(high_by_cat) > 0:
-                    top_alert_cat   = high_by_cat.idxmax()
-                    top_alert_count = int(high_by_cat.max())
-                    st.markdown(f"""
-                    <div style='background:#FFF8F3;border-left:4px solid #6F4E37;
-                                padding:16px 20px;border-radius:8px;margin-top:8px'>
-                        <b>Alert Level by category:</b><br/>{per_cat_html}<br/><br/>
-                        <b>{top_alert_cat}</b> has the most High Alert items (<b>{top_alert_count} records</b>).
-                        Immediately review ingredient freshness and storage for this category.
-                        Consider adjusting order frequency to reduce spoilage risk.
-                    </div>
-                    """, unsafe_allow_html=True)
-                else:
-                    st.markdown(f"""
-                    <div style='background:#F0EDE2;border-left:4px solid #6B8E4E;
-                                padding:16px 20px;border-radius:8px;margin-top:8px'>
-                        <b>Alert Level by category:</b><br/>{per_cat_html}<br/><br/>
-                        <b>Good news!</b> No High Alert items detected.
-                        Current ingredient management is working well.
-                    </div>
-                    """, unsafe_allow_html=True)
+                    val_by_ing_3 = val_by_ing.sort_values('Value', ascending=False).head(3)
+                    val_by_ing_html = full_breakdown_html(
+                        list(zip(val_by_ing_3['Ingredient'], val_by_ing_3['Value'])), prefix='₱', show_pct=False
+                    )
+                    chart_insight(
+                        f"Top 3 by inventory value — {val_by_ing_html}. Together, all {len(val_by_ing)} "
+                        f"ingredients shown tie up <b>₱{val_by_ing['Value'].sum():,.2f}</b> in inventory."
+                    )
 
-# ============================================================================
-# PAGE 5: INVENTORY STATUS — with Alert Level + Out of Stock
-# ============================================================================
+            st.markdown("")
 
-elif page == 'Inventory Status':
-
-    st.title("Inventory Status")
-    st.caption("To add new inventory records, go to the **Import Data** page — all data uploads now happen there.")
-
-    # Alert level colors (renamed from Risk)
-    ALERT_COLORS = {
-        'High Alert':   EARTH['danger'],
-        'Medium Alert': EARTH['warning'],
-        'Low Alert':    EARTH['success'],
-        'Expired':      '#4E342E',
-        'Out of Stock': '#8D6E63',   # muted mocha — distinct from other levels
-    }
-
-    if inventory_df is not None and len(inventory_df) > 0:
-        inv_hist = inventory_df.copy()
-
-        # ── Rename "Risk" → "Alert Level" ────────────────────────────────
-        if 'spoilage_risk' in inv_hist.columns:
-            inv_hist['alert_level'] = inv_hist['spoilage_risk'].replace({
-                'High Risk':   'High Alert',
-                'Medium Risk': 'Medium Alert',
-                'Low Risk':    'Low Alert',
-                'Expired':     'Expired',
+            # ── Download inventory report — same cleaned columns as the table ──
+            inv_export = inv.copy()
+            inv_export['Action'] = inv_export['alert_level'].apply(
+                lambda lvl: 'Discard' if lvl == 'Expired' else ('Restock' if lvl == 'Out of Stock' else '—')
+            )
+            if 'purchase_date' in inv_export.columns:
+                inv_export['Purchase Date'] = pd.to_datetime(inv_export['purchase_date'], errors='coerce').dt.strftime('%Y-%m-%d')
+            if 'expiration_date' in inv_export.columns:
+                inv_export['Expiry Date'] = pd.to_datetime(
+                    inv_export['expiration_date'].astype(str).str.split(' ').str[0], errors='coerce'
+                ).dt.strftime('%Y-%m-%d')
+            inv_export = inv_export.rename(columns={
+                'ingredient': 'Ingredient', 'quantity': 'Quantity', 'unit': 'Unit',
+                'cost_per_unit': 'Cost per Unit', 'total_cost': 'Total Cost', 'alert_level': 'Alert Level',
             })
-        elif 'alert_level' not in inv_hist.columns:
-            inv_hist['alert_level'] = 'Low Alert'
+            export_cols = [c for c in [
+                'Ingredient', 'Purchase Date', 'Expiry Date', 'Quantity', 'Unit',
+                'Cost per Unit', 'Total Cost', 'Alert Level', 'Action'
+            ] if c in inv_export.columns]
+            csv_inv = inv_export[export_cols].to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="Download Inventory Report",
+                data=csv_inv,
+                file_name="inventory_report.csv",
+                mime="text/csv"
+            )
 
-        # ── Mark Out of Stock — quantity = 0 ─────────────────────────────
-        if 'quantity' in inv_hist.columns:
-            inv_hist.loc[inv_hist['quantity'] <= 0, 'alert_level'] = 'Out of Stock'
-
-        if 'purchase_date' in inv_hist.columns:
-            inv_hist['purchase_date'] = pd.to_datetime(inv_hist['purchase_date'], errors='coerce')
-
-        # ── "Current" snapshot — most recent 30 days of purchases ─────────
-        # (inventory now holds 3 years of history for trend purposes; KPIs /
-        # alert levels below should reflect what's actually on hand today)
-        if 'purchase_date' in inv_hist.columns:
-            cutoff = inv_hist['purchase_date'].max() - pd.Timedelta(days=30)
-            inv = inv_hist[inv_hist['purchase_date'] >= cutoff].copy()
         else:
-            inv = inv_hist.copy()
+            st.info("No inventory data yet. Go to the Import Data page to upload your inventory records.")
 
-        # ── Summary badges ────────────────────────────────────────────────
-        st.caption("Snapshot of the most recent 30 days of purchases. Full 3-year history is available in the 'Inventory Value Over Time' chart below.")
-        alert_order = ['High Alert','Medium Alert','Low Alert','Expired','Out of Stock']
-        alert_counts = inv['alert_level'].value_counts()
-
-        cols = st.columns(len(alert_order))
-        for i, level in enumerate(alert_order):
-            count = alert_counts.get(level, 0)
-            color = ALERT_COLORS.get(level, '#333')
-            with cols[i]:
-                st.markdown(
-                    f"<div style='background:{color};color:white;padding:14px;"
-                    f"border-radius:10px;text-align:center;'>"
-                    f"<b style='font-size:13px'>{level}</b><br>"
-                    f"<span style='font-size:28px;font-weight:bold'>{count}</span>"
-                    f"</div>",
-                    unsafe_allow_html=True
-                )
-
-        st.markdown("")
-        st.markdown("---")
-
-        # ── Alert level filter — now actually applied below (previously the
-        # filtered result was computed but never used by any table) ───────
-        filter_level = st.selectbox(
-            "Filter by Alert Level",
-            ['All'] + alert_order,
-            key='inv_filter_level'
-        )
-        inv_filtered = inv if filter_level == 'All' else inv[inv['alert_level'] == filter_level]
-
-        # ── Inventory Records table — the main filterable, row-level view ──
-        with st.container(border=True):
-            st.markdown("#### Inventory Records")
-            st.caption(
-                "Purchase Date and Expiry Date are shown side by side. Expired items are marked "
-                "**Discard** in the Action column; Out of Stock items are marked **Restock**."
-            )
-            if len(inv_filtered) == 0:
-                st.info("No inventory records match this filter.")
-            else:
-                inv_table = inv_filtered.copy()
-
-                # Discard/Restock action column, derived from Alert Level
-                def _inv_action(level):
-                    if level == 'Expired':
-                        return 'Discard'
-                    if level == 'Out of Stock':
-                        return 'Restock'
-                    return '—'
-                inv_table['Action'] = inv_table['alert_level'].apply(_inv_action)
-
-                # Clean date columns — strip the 00:00:00 time component that
-                # a plain Timestamp/string otherwise renders in a dataframe.
-                if 'purchase_date' in inv_table.columns:
-                    inv_table['Purchase Date'] = pd.to_datetime(inv_table['purchase_date'], errors='coerce').dt.strftime('%Y-%m-%d')
-                if 'expiration_date' in inv_table.columns:
-                    inv_table['Expiry Date'] = pd.to_datetime(
-                        inv_table['expiration_date'].astype(str).str.split(' ').str[0], errors='coerce'
-                    ).dt.strftime('%Y-%m-%d')
-
-                rename_map = {
-                    'ingredient': 'Ingredient', 'quantity': 'Quantity', 'unit': 'Unit',
-                    'cost_per_unit': 'Cost per Unit', 'total_cost': 'Total Cost',
-                    'alert_level': 'Alert Level',
-                }
-                inv_table = inv_table.rename(columns=rename_map)
-
-                # Sort most urgent first by default: High Alert / Expired /
-                # Out of Stock rows surface at the top even when the filter
-                # is left on 'All', with soonest-to-expire first within a level.
-                _urgency_rank = {'High Alert': 0, 'Expired': 1, 'Out of Stock': 2, 'Medium Alert': 3, 'Low Alert': 4}
-                inv_table['_urgency'] = inv_table['Alert Level'].map(_urgency_rank).fillna(9)
-                sort_cols = ['_urgency'] + (['expiration_date'] if 'expiration_date' in inv_table.columns else [])
-                inv_table = inv_table.sort_values(sort_cols).drop(columns=['_urgency'])
-
-                # Column order: Purchase Date + Expiry Date side by side;
-                # inventory_key, shelf_life_days, days_until_expiration are
-                # dropped entirely (internal/derived fields, not useful here).
-                display_cols = [c for c in [
-                    'Ingredient', 'Purchase Date', 'Expiry Date', 'Quantity', 'Unit',
-                    'Cost per Unit', 'Total Cost', 'Alert Level', 'Action'
-                ] if c in inv_table.columns]
-                inv_table = inv_table[display_cols]
-
-                # Color-code the Alert Level column the same way the Menu
-                # Performance page colors its Keep/Improve/Reconsider column.
-                def _style_alert_col(val):
-                    m = {
-                        'High Alert':   'background-color:#FBEAEA;color:#C62828;font-weight:600',
-                        'Medium Alert': 'background-color:#FDF1DE;color:#B85C00;font-weight:600',
-                        'Low Alert':    'background-color:#E7F3E8;color:#2E7D32;font-weight:600',
-                        'Expired':      'background-color:#E8DCD8;color:#4E342E;font-weight:600',
-                        'Out of Stock': 'background-color:#EFE6E0;color:#6D4C41;font-weight:600',
-                    }
-                    return m.get(val, '')
-
-                def _style_action_col(val):
-                    if val == 'Discard':
-                        return 'background-color:#FBEAEA;color:#C62828;font-weight:600'
-                    if val == 'Restock':
-                        return 'background-color:#FDF1DE;color:#B85C00;font-weight:600'
-                    return ''
-
-                fmt_map_inv = {}
-                if 'Cost per Unit' in inv_table.columns: fmt_map_inv['Cost per Unit'] = '₱{:,.2f}'
-                if 'Total Cost' in inv_table.columns:    fmt_map_inv['Total Cost']    = '₱{:,.2f}'
-                if 'Quantity' in inv_table.columns:      fmt_map_inv['Quantity']      = '{:,.1f}'
-
-                styled_inv = inv_table.style
-                if 'Alert Level' in inv_table.columns:
-                    styled_inv = style_map(styled_inv, _style_alert_col, subset=['Alert Level'])
-                if 'Action' in inv_table.columns:
-                    styled_inv = style_map(styled_inv, _style_action_col, subset=['Action'])
-                if fmt_map_inv:
-                    styled_inv = styled_inv.format(fmt_map_inv)
-
-                st.dataframe(styled_inv, use_container_width=True, hide_index=True)
-
-        st.markdown("")
-
-        # ── Inventory Guide — what to restock this week/day ────────────────
-        with st.container(border=True):
-            st.markdown("#### Inventory Guide")
-            st.caption("What to restock now, what to restock this week, and what's well stocked — based on each ingredient's latest purchase record.")
-
-            if 'ingredient' in inv_hist.columns and 'purchase_date' in inv_hist.columns:
-                latest_per_ing = (
-                    inv_hist.dropna(subset=['purchase_date'])
-                    .sort_values('purchase_date')
-                    .drop_duplicates(subset='ingredient', keep='last')
-                    .copy()
-                )
-
-                restock_now  = latest_per_ing[latest_per_ing['alert_level'].isin(['Out of Stock', 'Expired'])]
-                restock_soon = latest_per_ing[latest_per_ing['alert_level'].isin(['High Alert', 'Medium Alert'])]
-                well_stocked = latest_per_ing[latest_per_ing['alert_level'] == 'Low Alert']
-
-                def _guide_col(df_g, color, empty_msg, show_reason=False):
-                    if len(df_g) == 0:
-                        st.caption(empty_msg)
-                        return
-                    rows = df_g.sort_values('quantity') if 'quantity' in df_g.columns else df_g
-                    for _, r in rows.iterrows():
-                        qty_txt = ""
-                        if 'quantity' in df_g.columns and pd.notna(r['quantity']):
-                            unit_txt = str(r['unit']) if 'unit' in df_g.columns and pd.notna(r.get('unit')) else ''
-                            qty_txt = f" — {r['quantity']:.0f} {unit_txt} left".rstrip()
-                        reason_txt = ""
-                        if show_reason and 'alert_level' in df_g.columns and pd.notna(r.get('alert_level')):
-                            reason_txt = f" <span style='color:#8A7460;font-size:11.5px'>({r['alert_level']})</span>"
-                        st.markdown(
-                            f"<div style='padding:7px 12px;border-left:3px solid {color};"
-                            f"margin-bottom:4px;font-size:13.5px;color:#3E2723'>"
-                            f"{r['ingredient']}{qty_txt}{reason_txt}</div>",
-                            unsafe_allow_html=True
-                        )
-
-                g1, g2, g3 = st.columns(3)
-                with g1:
-                    st.markdown(
-                        "<div style='background:#C62828;color:white;padding:8px 14px;"
-                        "border-radius:8px;text-align:center;font-weight:bold;"
-                        "font-size:13px;margin-bottom:10px'>RESTOCK NOW</div>",
-                        unsafe_allow_html=True
-                    )
-                    _guide_col(restock_now, '#C62828', "Nothing out of stock or expired right now.", show_reason=True)
-                with g2:
-                    st.markdown(
-                        "<div style='background:#B85C00;color:white;padding:8px 14px;"
-                        "border-radius:8px;text-align:center;font-weight:bold;"
-                        "font-size:13px;margin-bottom:10px'>RESTOCK THIS WEEK</div>",
-                        unsafe_allow_html=True
-                    )
-                    _guide_col(restock_soon, '#B85C00', "Nothing needs restocking this week.")
-                with g3:
-                    st.markdown(
-                        "<div style='background:#2E7D32;color:white;padding:8px 14px;"
-                        "border-radius:8px;text-align:center;font-weight:bold;"
-                        "font-size:13px;margin-bottom:10px'>WELL STOCKED</div>",
-                        unsafe_allow_html=True
-                    )
-                    _guide_col(well_stocked, '#2E7D32', "No ingredients marked as well stocked yet.")
-
-                st.markdown("")
-                chart_insight(
-                    f"<b>{len(restock_now)}</b> ingredient(s) need restocking right now, "
-                    f"<b>{len(restock_soon)}</b> should be reordered this week, and "
-                    f"<b>{len(well_stocked)}</b> are currently well stocked. "
-                    "To add a brand-new ingredient that isn't tracked yet, upload it on the Import Data page — "
-                    "it will show up here once it has a purchase record."
-                )
-            else:
-                st.info("Not enough inventory history to build a restock guide yet.")
-
-        st.markdown("")
-
-        # ── Bar chart — inventory by alert level ──────────────────────────
-        with st.container(border=True):
-            st.markdown("#### Inventory Alert Level Distribution")
-            dist = inv['alert_level'].value_counts().reindex(alert_order).fillna(0).reset_index()
-            dist.columns = ['Alert Level', 'Count']
-            fig = px.bar(dist, x='Alert Level', y='Count',
-                         color='Alert Level',
-                         color_discrete_map=ALERT_COLORS,
-                         text_auto=True,
-                         category_orders={'Alert Level': alert_order})
-            fig.update_layout(
-                plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                showlegend=False, margin=dict(l=0,r=0,t=10,b=0)
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
-            high_ct = int(dist.loc[dist['Alert Level']=='High Alert','Count'].sum())
-            alert_dist_sorted = dist[dist['Count'] > 0].sort_values('Count', ascending=False)
-            alert_dist_html = full_breakdown_html(
-                list(zip(alert_dist_sorted['Alert Level'], alert_dist_sorted['Count'])), decimals=0
-            )
-            if high_ct > 0:
-                chart_insight(f"Inventory by alert level — {alert_dist_html}. "
-                              f"<b>{high_ct}</b> item(s) are at High Alert and need urgent attention.", 'warn')
-            else:
-                chart_insight(f"Inventory by alert level — {alert_dist_html}. "
-                              f"No items are currently at High Alert. Current ingredient management is working well.", 'good')
-
-        st.markdown("")
-
-        # ── Additional graphs ────────────────────────────────────────────
-        with st.container(border=True):
-            st.markdown("#### Inventory Value by Ingredient (Top 10)")
-            if 'ingredient' in inv.columns and 'total_cost' in inv.columns:
-                val_by_ing = (
-                    inv.groupby('ingredient')['total_cost']
-                    .sum().nlargest(10).reset_index()
-                )
-                val_by_ing.columns = ['Ingredient', 'Value']
-                fig2 = px.bar(val_by_ing, x='Value', y='Ingredient', orientation='h',
-                              color='Value', color_continuous_scale=['#C4A882', '#6F4E37'],
-                              text_auto=',.0f')
-                fig2.update_traces(texttemplate='₱%{x:,.0f}', textposition='outside')
-                fig2.update_layout(
-                    yaxis={'categoryorder': 'total ascending'},
-                    plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                    coloraxis_showscale=False, xaxis_title='Inventory Value (₱)',
-                    margin=dict(l=0, r=80, t=10, b=0)
-                )
-                st.plotly_chart(fig2, use_container_width=True)
-
-                val_by_ing_3 = val_by_ing.sort_values('Value', ascending=False).head(3)
-                val_by_ing_html = full_breakdown_html(
-                    list(zip(val_by_ing_3['Ingredient'], val_by_ing_3['Value'])), prefix='₱', show_pct=False
-                )
-                chart_insight(
-                    f"Top 3 by inventory value — {val_by_ing_html}. Together, all {len(val_by_ing)} "
-                    f"ingredients shown tie up <b>₱{val_by_ing['Value'].sum():,.2f}</b> in inventory."
-                )
-
-        st.markdown("")
-
-        with st.container(border=True):
-            st.markdown("#### Quantity vs. Days Until Expiration")
-            if 'days_until_expiration' in inv.columns and 'quantity' in inv.columns:
-                fig3 = px.scatter(
-                    inv, x='days_until_expiration', y='quantity',
-                    color='alert_level',
-                    color_discrete_map=ALERT_COLORS,
-                    hover_data=[c for c in ['ingredient'] if c in inv.columns],
-                    labels={'days_until_expiration': 'Days Until Expiration', 'quantity': 'Quantity'}
-                )
-                fig3.update_layout(
-                    plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                    legend=dict(orientation='h', y=1.15),
-                    margin=dict(l=0, r=0, t=10, b=0)
-                )
-                st.plotly_chart(fig3, use_container_width=True)
-
-                near_exp = inv[inv['days_until_expiration'] <= 2]
-                batch_by_alert = inv['alert_level'].value_counts()
-                batch_by_alert_html = full_breakdown_html(
-                    list(batch_by_alert.sort_values(ascending=False).items()), decimals=0
-                )
-                if len(near_exp) > 0:
-                    chart_insight(
-                        f"Batches by alert level — {batch_by_alert_html}. "
-                        f"<b>{len(near_exp)}</b> batch(es) have 2 days or less until expiration — "
-                        f"the points furthest to the left need immediate attention.",
-                        'warn'
-                    )
-                else:
-                    chart_insight(
-                        f"Batches by alert level — {batch_by_alert_html}. "
-                        f"No batches are within 2 days of expiring right now.", 'good'
-                    )
-
-        st.markdown("")
-
-        # ── Inventory value trend over time — full history, filterable ────
-        with st.container(border=True):
-            st.markdown("#### Inventory Value Over Time")
-            st.caption("Uses the full purchase history (up to 3 years), independent of the 30-day snapshot above.")
-            if 'purchase_date' in inv_hist.columns and 'total_cost' in inv_hist.columns:
-                if 'ingredient' in inv_hist.columns:
-                    ings = sorted(inv_hist['ingredient'].dropna().unique().tolist())
-                    sel_ing = st.selectbox("Ingredient", ['All'] + ings, key='inv_value_ingredient')
-                else:
-                    sel_ing = 'All'
-
-                inv_time = inv_hist.copy()
-                if sel_ing != 'All':
-                    inv_time = inv_time[inv_time['ingredient'] == sel_ing]
-
-                inv_time, inv_value_gran = render_daily_weekly_yearly_filter(
-                    inv_time, 'inv_value', date_col='purchase_date'
-                )
-
-                if inv_value_gran == 'Daily':
-                    inv_time['period'] = inv_time['purchase_date'].dt.date
-                elif inv_value_gran == 'Yearly':
-                    inv_time['period'] = inv_time['purchase_date'].dt.year
-                else:
-                    inv_time['period'] = inv_time['purchase_date'].dt.to_period('W').dt.start_time
-
-                trend = inv_time.groupby('period')['total_cost'].sum().reset_index()
-                trend.columns = ['Date', 'Value']
-                trend = trend.sort_values('Date')
-                fig4 = px.line(trend, x='Date', y='Value', markers=True,
-                                color_discrete_sequence=[EARTH['accent']])
-                fig4.update_layout(
-                    plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                    yaxis=dict(tickprefix='₱', tickformat=',.0f'),
-                    xaxis_title=inv_value_gran,
-                    margin=dict(l=0, r=0, t=10, b=0)
-                )
-                st.plotly_chart(fig4, use_container_width=True)
-
-                if len(trend) == 0:
-                    st.info("No inventory records for this selection.")
-                elif len(trend) >= 2:
-                    val_dir = "increasing" if trend['Value'].iloc[-1] > trend['Value'].iloc[0] else "decreasing"
-                    highest_row = trend.loc[trend['Value'].idxmax()]
-                    lowest_row  = trend.loc[trend['Value'].idxmin()]
-                    chart_insight(
-                        f"Inventory value is <b>{val_dir}</b> over this {inv_value_gran.lower()} view. "
-                        f"It peaked at <b>₱{highest_row['Value']:,.2f}</b> "
-                        f"({pd.to_datetime(highest_row['Date']).strftime('%Y-%m-%d')}) and was "
-                        f"lowest at <b>₱{lowest_row['Value']:,.2f}</b> "
-                        f"({pd.to_datetime(lowest_row['Date']).strftime('%Y-%m-%d')}). "
-                        f"Latest value: <b>₱{trend['Value'].iloc[-1]:,.2f}</b> "
-                        f"(average across all periods shown: ₱{trend['Value'].mean():,.2f})."
-                    )
-                else:
-                    chart_insight(f"Only one {inv_value_gran.lower()} period in this selection: "
-                                   f"<b>₱{trend['Value'].iloc[0]:,.2f}</b>.")
-
-        st.markdown("")
-
-        # ── Download inventory report — same cleaned columns as the table ──
-        inv_export = inv.copy()
-        inv_export['Action'] = inv_export['alert_level'].apply(
-            lambda lvl: 'Discard' if lvl == 'Expired' else ('Restock' if lvl == 'Out of Stock' else '—')
-        )
-        if 'purchase_date' in inv_export.columns:
-            inv_export['Purchase Date'] = pd.to_datetime(inv_export['purchase_date'], errors='coerce').dt.strftime('%Y-%m-%d')
-        if 'expiration_date' in inv_export.columns:
-            inv_export['Expiry Date'] = pd.to_datetime(
-                inv_export['expiration_date'].astype(str).str.split(' ').str[0], errors='coerce'
-            ).dt.strftime('%Y-%m-%d')
-        inv_export = inv_export.rename(columns={
-            'ingredient': 'Ingredient', 'quantity': 'Quantity', 'unit': 'Unit',
-            'cost_per_unit': 'Cost per Unit', 'total_cost': 'Total Cost', 'alert_level': 'Alert Level',
-        })
-        export_cols = [c for c in [
-            'Ingredient', 'Purchase Date', 'Expiry Date', 'Quantity', 'Unit',
-            'Cost per Unit', 'Total Cost', 'Alert Level', 'Action'
-        ] if c in inv_export.columns]
-        csv_inv = inv_export[export_cols].to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="Download Inventory Report",
-            data=csv_inv,
-            file_name="inventory_report.csv",
-            mime="text/csv"
-        )
-
-    else:
-        st.info("No inventory data yet. Go to the Import Data page to upload your inventory records.")
 
 # ============================================================================
-# PAGE 6: FORECAST & PREDICTIONS
-# Waste/menu/spoilage predictions (RF models) + adjustable waste trend forecast
+# PAGE 4: FORECAST & PREDICTIONS
 # ============================================================================
 
 elif page == 'Forecast & Predictions':
@@ -3815,7 +3491,7 @@ elif page == 'Forecast & Predictions':
                     f"<b>{len(restock_now_fc)}</b> ingredient(s) need restocking right now, "
                     f"<b>{len(restock_soon_fc)}</b> should be reordered this week, and "
                     f"<b>{len(well_stocked_fc)}</b> are currently well stocked. See the "
-                    "Inventory Status page for the full breakdown."
+                    "Waste & Inventory page for the full breakdown."
                 )
             else:
                 st.info("Not enough inventory history to build a restock guide yet.")
@@ -4152,13 +3828,15 @@ elif page == 'Forecast & Predictions':
                 mime="text/csv", key=f'{key_prefix}_download'
             )
 
+    # Kept to the two forecasts that drive waste reduction: how much waste
+    # to expect, and how much product will be demanded (so prep matches it).
     _render_forecast_metric('Waste Cost', 'waste', 'fc_wastecost')
     st.markdown("")
-    _render_forecast_metric('Units Wasted', 'waste', 'fc_unitswasted')
-    st.markdown("")
     _render_forecast_metric('Product Demand (units)', 'sales', 'fc_demand')
-    st.markdown("")
-    _render_forecast_metric('Sales Revenue', 'sales', 'fc_salesrev')
+
+# ============================================================================
+# PAGE 5: IMPORT DATA
+# ============================================================================
 
 elif page == 'Import Data':
 
@@ -4757,127 +4435,124 @@ elif page == 'Import Data':
 
         conn.close()
 
+
 # ============================================================================
-# PAGE: USER MANAGEMENT (Owner only)
+# PAGE 6: ADMIN — Owner only (User Management + Audit Log as tabs)
 # ============================================================================
-elif page == 'User Management':
+
+elif page == 'Admin':
 
     if st.session_state.get('auth_role') != 'Owner':
-        st.error("Only the Owner can manage user accounts.")
+        st.error("Only the Owner can open this page.")
         st.stop()
 
-    hero_banner("Access Control", "User Management",
-                "Create staff accounts, deactivate users who no longer need access, and reset passwords.")
+    _t0, _t1 = st.tabs(["User Management", "Audit Log"])
 
-    with st.container(border=True):
-        st.markdown("### Add a User")
-        with st.form("add_user_form", clear_on_submit=True):
-            c1, c2 = st.columns(2)
-            with c1:
-                nu_user = st.text_input("Username")
-                nu_name = st.text_input("Full name")
-            with c2:
-                nu_role = st.selectbox("Role", ['Staff', 'Owner'])
-                nu_pw = st.text_input("Temporary password (min. 8 characters)", type="password")
-            if st.form_submit_button("Create user", type="primary"):
-                if not nu_user.strip() or not nu_name.strip():
-                    st.error("Username and full name are required.")
-                elif len(nu_pw) < 8:
-                    st.error("Password must be at least 8 characters.")
-                else:
-                    try:
-                        create_user(nu_user, nu_name, nu_role, nu_pw, created_by=st.session_state.auth_user)
-                        log_audit('USER_CREATED', 'USERS', 1, f"Created {nu_role} account '{nu_user.strip().lower()}'")
-                        st.success(f"Created {nu_role} account '{nu_user.strip().lower()}'.")
-                    except sqlite3.IntegrityError:
-                        st.error("That username already exists.")
-
-    st.markdown("")
-    with st.container(border=True):
-        st.markdown("### Existing Users")
-        _c = _auth_conn()
-        users_df = pd.read_sql("SELECT username AS Username, full_name AS [Full name], role AS Role, "
-                               "CASE active WHEN 1 THEN 'Active' ELSE 'Deactivated' END AS Status, "
-                               "created_at AS [Created], created_by AS [Created by] FROM USERS ORDER BY role, username", _c)
-        _c.close()
-        st.dataframe(users_df, use_container_width=True, hide_index=True)
-
-        st.markdown("#### Manage an account")
-        others = [u for u in users_df['Username'] if u != st.session_state.auth_user]
-        if not others:
-            st.caption("No other accounts yet.")
-        else:
-            m1, m2 = st.columns(2)
-            with m1:
-                target = st.selectbox("Account", others, key='um_target')
-                tgt_status = users_df.loc[users_df['Username'] == target, 'Status'].iloc[0]
-                if st.button("Deactivate" if tgt_status == 'Active' else "Reactivate", key='um_toggle'):
-                    _c = _auth_conn()
-                    _c.execute("UPDATE USERS SET active=? WHERE username=?", (0 if tgt_status == 'Active' else 1, target))
-                    _c.commit(); _c.close()
-                    log_audit('USER_DEACTIVATED' if tgt_status == 'Active' else 'USER_REACTIVATED', 'USERS', 1, f"Account '{target}'")
-                    st.rerun()
-            with m2:
-                new_pw = st.text_input("New temporary password (min. 8 characters)", type="password", key='um_newpw')
-                if st.button("Reset password", key='um_reset'):
-                    if len(new_pw) < 8:
-                        st.error("Password must be at least 8 characters.")
-                    else:
-                        _s = secrets.token_hex(16)
-                        _c = _auth_conn()
-                        _c.execute("UPDATE USERS SET salt=?, pw_hash=? WHERE username=?", (_s, _hash_pw(new_pw, _s), target))
-                        _c.commit(); _c.close()
-                        log_audit('PASSWORD_RESET', 'USERS', 1, f"Reset password for '{target}'")
-                        st.success(f"Password reset for '{target}'.")
-
-# ============================================================================
-# PAGE: AUDIT LOG (Owner only) — read-only history of who did what
-# ============================================================================
-elif page == 'Audit Log':
-
-    if st.session_state.get('auth_role') != 'Owner':
-        st.error("Only the Owner can view the audit log.")
-        st.stop()
-
-    hero_banner("Accountability", "Audit Log",
-                "A read-only history of every login, upload, edit, and deletion — who did it, when, and to which records.")
-
-    _c = _auth_conn()
-    log_df = pd.read_sql("SELECT timestamp AS [Date & time], username AS [User], role AS [Role], action AS [Action], "
-                         "table_name AS [Data], records_affected AS [Records], detail AS [Details] "
-                         "FROM AUDIT_LOG ORDER BY log_id DESC", _c)
-    _c.close()
-
-    if len(log_df) == 0:
-        st.info("No activity has been recorded yet.")
-    else:
-        log_df['_ts'] = pd.to_datetime(log_df['Date & time'], errors='coerce')
-        k1, k2, k3, k4 = st.columns(4)
-        with k1: stat_card("Total events", f"{len(log_df):,}")
-        with k2: stat_card("Deletions", f"{int((log_df['Action'] == 'DELETE').sum()):,}")
-        with k3: stat_card("Records deleted", f"{int(log_df.loc[log_df['Action'] == 'DELETE', 'Records'].fillna(0).sum()):,}")
-        with k4: stat_card("Failed logins", f"{int((log_df['Action'] == 'LOGIN_FAILED').sum()):,}")
-        st.markdown("")
+    with _t0:
+        hero_banner("Access Control", "User Management",
+                    "Create staff accounts, deactivate users who no longer need access, and reset passwords.")
 
         with st.container(border=True):
-            st.markdown("#### Filter")
-            f1, f2, f3 = st.columns(3)
-            with f1:
-                f_action = st.selectbox("Action", ['All'] + sorted(log_df['Action'].unique().tolist()), key='al_action')
-            with f2:
-                f_user = st.selectbox("User", ['All'] + sorted(log_df['User'].dropna().unique().tolist()), key='al_user')
-            with f3:
-                _min, _max = log_df['_ts'].min().date(), log_df['_ts'].max().date()
-                f_range = st.date_input("Date range", value=(_min, _max), min_value=_min, max_value=_max, key='al_range')
+            st.markdown("### Add a User")
+            with st.form("add_user_form", clear_on_submit=True):
+                c1, c2 = st.columns(2)
+                with c1:
+                    nu_user = st.text_input("Username")
+                    nu_name = st.text_input("Full name")
+                with c2:
+                    nu_role = st.selectbox("Role", ['Staff', 'Owner'])
+                    nu_pw = st.text_input("Temporary password (min. 8 characters)", type="password")
+                if st.form_submit_button("Create user", type="primary"):
+                    if not nu_user.strip() or not nu_name.strip():
+                        st.error("Username and full name are required.")
+                    elif len(nu_pw) < 8:
+                        st.error("Password must be at least 8 characters.")
+                    else:
+                        try:
+                            create_user(nu_user, nu_name, nu_role, nu_pw, created_by=st.session_state.auth_user)
+                            log_audit('USER_CREATED', 'USERS', 1, f"Created {nu_role} account '{nu_user.strip().lower()}'")
+                            st.success(f"Created {nu_role} account '{nu_user.strip().lower()}'.")
+                        except sqlite3.IntegrityError:
+                            st.error("That username already exists.")
 
-            view = log_df.copy()
-            if f_action != 'All': view = view[view['Action'] == f_action]
-            if f_user != 'All':   view = view[view['User'] == f_user]
-            if isinstance(f_range, tuple) and len(f_range) == 2:
-                view = view[(view['_ts'].dt.date >= f_range[0]) & (view['_ts'].dt.date <= f_range[1])]
-            view = view.drop(columns=['_ts'])
+        st.markdown("")
+        with st.container(border=True):
+            st.markdown("### Existing Users")
+            _c = _auth_conn()
+            users_df = pd.read_sql("SELECT username AS Username, full_name AS [Full name], role AS Role, "
+                                   "CASE active WHEN 1 THEN 'Active' ELSE 'Deactivated' END AS Status, "
+                                   "created_at AS [Created], created_by AS [Created by] FROM USERS ORDER BY role, username", _c)
+            _c.close()
+            st.dataframe(users_df, use_container_width=True, hide_index=True)
 
-            st.caption(f"Showing **{len(view):,}** of {len(log_df):,} events (newest first). Entries cannot be edited or deleted from the app.")
-            st.dataframe(view, use_container_width=True, hide_index=True)
-            st.download_button("Download audit log as CSV", data=view.to_csv(index=False).encode('utf-8'),
-                               file_name="dinedata_audit_log.csv", mime="text/csv")
+            st.markdown("#### Manage an account")
+            others = [u for u in users_df['Username'] if u != st.session_state.auth_user]
+            if not others:
+                st.caption("No other accounts yet.")
+            else:
+                m1, m2 = st.columns(2)
+                with m1:
+                    target = st.selectbox("Account", others, key='um_target')
+                    tgt_status = users_df.loc[users_df['Username'] == target, 'Status'].iloc[0]
+                    if st.button("Deactivate" if tgt_status == 'Active' else "Reactivate", key='um_toggle'):
+                        _c = _auth_conn()
+                        _c.execute("UPDATE USERS SET active=? WHERE username=?", (0 if tgt_status == 'Active' else 1, target))
+                        _c.commit(); _c.close()
+                        log_audit('USER_DEACTIVATED' if tgt_status == 'Active' else 'USER_REACTIVATED', 'USERS', 1, f"Account '{target}'")
+                        st.rerun()
+                with m2:
+                    new_pw = st.text_input("New temporary password (min. 8 characters)", type="password", key='um_newpw')
+                    if st.button("Reset password", key='um_reset'):
+                        if len(new_pw) < 8:
+                            st.error("Password must be at least 8 characters.")
+                        else:
+                            _s = secrets.token_hex(16)
+                            _c = _auth_conn()
+                            _c.execute("UPDATE USERS SET salt=?, pw_hash=? WHERE username=?", (_s, _hash_pw(new_pw, _s), target))
+                            _c.commit(); _c.close()
+                            log_audit('PASSWORD_RESET', 'USERS', 1, f"Reset password for '{target}'")
+                            st.success(f"Password reset for '{target}'.")
+
+    with _t1:
+        hero_banner("Accountability", "Audit Log",
+                    "A read-only history of every login, upload, edit, and deletion — who did it, when, and to which records.")
+
+        _c = _auth_conn()
+        log_df = pd.read_sql("SELECT timestamp AS [Date & time], username AS [User], role AS [Role], action AS [Action], "
+                             "table_name AS [Data], records_affected AS [Records], detail AS [Details] "
+                             "FROM AUDIT_LOG ORDER BY log_id DESC", _c)
+        _c.close()
+
+        if len(log_df) == 0:
+            st.info("No activity has been recorded yet.")
+        else:
+            log_df['_ts'] = pd.to_datetime(log_df['Date & time'], errors='coerce')
+            k1, k2, k3, k4 = st.columns(4)
+            with k1: stat_card("Total events", f"{len(log_df):,}")
+            with k2: stat_card("Deletions", f"{int((log_df['Action'] == 'DELETE').sum()):,}")
+            with k3: stat_card("Records deleted", f"{int(log_df.loc[log_df['Action'] == 'DELETE', 'Records'].fillna(0).sum()):,}")
+            with k4: stat_card("Failed logins", f"{int((log_df['Action'] == 'LOGIN_FAILED').sum()):,}")
+            st.markdown("")
+
+            with st.container(border=True):
+                st.markdown("#### Filter")
+                f1, f2, f3 = st.columns(3)
+                with f1:
+                    f_action = st.selectbox("Action", ['All'] + sorted(log_df['Action'].unique().tolist()), key='al_action')
+                with f2:
+                    f_user = st.selectbox("User", ['All'] + sorted(log_df['User'].dropna().unique().tolist()), key='al_user')
+                with f3:
+                    _min, _max = log_df['_ts'].min().date(), log_df['_ts'].max().date()
+                    f_range = st.date_input("Date range", value=(_min, _max), min_value=_min, max_value=_max, key='al_range')
+
+                view = log_df.copy()
+                if f_action != 'All': view = view[view['Action'] == f_action]
+                if f_user != 'All':   view = view[view['User'] == f_user]
+                if isinstance(f_range, tuple) and len(f_range) == 2:
+                    view = view[(view['_ts'].dt.date >= f_range[0]) & (view['_ts'].dt.date <= f_range[1])]
+                view = view.drop(columns=['_ts'])
+
+                st.caption(f"Showing **{len(view):,}** of {len(log_df):,} events (newest first). Entries cannot be edited or deleted from the app.")
+                st.dataframe(view, use_container_width=True, hide_index=True)
+                st.download_button("Download audit log as CSV", data=view.to_csv(index=False).encode('utf-8'),
+                                   file_name="dinedata_audit_log.csv", mime="text/csv")
