@@ -651,6 +651,34 @@ def db_available():
 def get_db_connection():
     return sqlite3.connect(DB_PATH, check_same_thread=False)
 
+# ── Archive support — adds is_archived/archived_at/archived_by to the main
+# tables if a database built before archiving existed doesn't have them yet.
+# build_database.py now creates these columns from the start; this is a
+# safety net for databases built with an older version of that script. ────
+ARCHIVE_TABLES = ['FACT_SALES', 'FACT_WASTE', 'FACT_INVENTORY', 'DIM_ITEM']
+
+def ensure_archive_columns():
+    if not db_available():
+        return
+    conn = get_db_connection()
+    for t in ARCHIVE_TABLES:
+        try:
+            cols = [r[1] for r in conn.execute(f"PRAGMA table_info({t})").fetchall()]
+            if not cols:
+                continue
+            if 'is_archived' not in cols:
+                conn.execute(f"ALTER TABLE {t} ADD COLUMN is_archived INTEGER DEFAULT 0")
+            if 'archived_at' not in cols:
+                conn.execute(f"ALTER TABLE {t} ADD COLUMN archived_at TEXT")
+            if 'archived_by' not in cols:
+                conn.execute(f"ALTER TABLE {t} ADD COLUMN archived_by TEXT")
+        except Exception:
+            pass
+    conn.commit()
+    conn.close()
+
+ensure_archive_columns()
+
 @st.cache_data
 def load_sales_from_db():
     try:
@@ -661,6 +689,7 @@ def load_sales_from_db():
             FROM FACT_SALES s
             JOIN DIM_DATE d ON s.date_key = d.date_key
             JOIN DIM_ITEM i ON s.item_key = i.item_key
+            WHERE COALESCE(s.is_archived, 0) = 0
         """, conn)
         conn.close()
         # de-dup the repeated item_name column from SELECT *-style aliasing above
@@ -674,7 +703,8 @@ def load_sales_from_db():
 def load_menu_from_db():
     try:
         conn = get_db_connection()
-        df = pd.read_sql("SELECT item_name, category, price, cost, profit_margin FROM DIM_ITEM", conn)
+        df = pd.read_sql("SELECT item_name, category, price, cost, profit_margin FROM DIM_ITEM "
+                         "WHERE COALESCE(is_archived, 0) = 0", conn)
         conn.close()
         return df
     except Exception:
@@ -693,6 +723,7 @@ def load_waste_from_db():
             JOIN DIM_DATE d ON w.date_key = d.date_key
             JOIN DIM_ITEM i ON w.item_key = i.item_key
             JOIN DIM_WASTE_REASON r ON w.reason_key = r.reason_key
+            WHERE COALESCE(w.is_archived, 0) = 0
         """, conn)
         conn.close()
         df['date'] = pd.to_datetime(df['date'], errors='coerce')
@@ -713,6 +744,7 @@ def load_inventory_from_db():
             JOIN DIM_DATE d ON inv.date_key = d.date_key
             JOIN DIM_INGREDIENT ing ON inv.ingredient_key = ing.ingredient_key
             JOIN DIM_ALERT_LEVEL al ON inv.alert_key = al.alert_key
+            WHERE COALESCE(inv.is_archived, 0) = 0
         """, conn)
         conn.close()
         df['purchase_date'] = pd.to_datetime(df['purchase_date'], errors='coerce')
@@ -906,7 +938,7 @@ def insert_inventory_records_to_db(new_inv_df):
 # written to an append-only AUDIT_LOG table recording WHO did it, WHEN, and
 # WHAT was affected. Stored in its own SQLite file inside the persistent
 # Database/ folder so it survives redeploys and is never touched by the
-# data-deletion tools on the Database page.
+# data-deletion tools on the Import Data page.
 # ============================================================================
 import hashlib, secrets, hmac
 from datetime import timezone, timedelta
@@ -1004,14 +1036,32 @@ if os.environ.get('DINEDATA_RESET_OWNER') == '1':
         _c.close()
         create_user(DEFAULT_OWNER_USER, 'Owner', 'Owner', DEFAULT_OWNER_PASS, created_by='recovery')
 
-# ── Login gate ──────────────────────────────────────────────────────────────
+# ── Login gate — earth-tone themed ───────────────────────────────────────────
 if not st.session_state.get('auth_user'):
     st.session_state.setdefault('login_failures', 0)
+    st.markdown(f'''
+    <style>
+    .stApp {{ background: linear-gradient(160deg, #FAF6F1 0%, #F1E9DE 100%); }}
+    [data-testid="stForm"] {{
+        background: white; border-radius: 18px; padding: 8px 6px;
+        border: 1px solid rgba(62,39,35,0.08);
+        box-shadow: 0 10px 30px rgba(62,39,35,0.10);
+    }}
+    div[data-testid="stVerticalBlockBorderWrapper"]:has([data-testid="stForm"]) {{
+        background: transparent !important; border: none !important; box-shadow: none !important;
+    }}
+    </style>
+    <div style='text-align:center;margin-top:64px;margin-bottom:22px'>
+        <div style='display:inline-flex;align-items:center;justify-content:center;
+                    width:64px;height:64px;border-radius:18px;margin-bottom:14px;
+                    background:linear-gradient(135deg,{EARTH["dark"]} 0%,{EARTH["primary"]} 100%);
+                    box-shadow:0 8px 20px rgba(62,39,35,0.25);font-size:28px'>☕</div>
+        <h1 style='margin:0;color:{EARTH["dark"]};font-weight:800'>DineData</h1>
+        <p style='color:#8A7968;font-size:15px;margin-top:4px'>Kôfētala Bistro — please sign in</p>
+    </div>
+    ''', unsafe_allow_html=True)
     _l, _m, _r = st.columns([1, 1.2, 1])
     with _m:
-        st.markdown("<div style='text-align:center;margin-top:60px'>"
-                    "<h1 style='margin-bottom:0'>DineData</h1>"
-                    "<p style='color:#8A7968'>Kôfētala Bistro — please sign in</p></div>", unsafe_allow_html=True)
         with st.container(border=True):
             if st.session_state.login_failures >= MAX_LOGIN_ATTEMPTS:
                 st.error("Too many failed attempts. Refresh the page to try again.")
@@ -1036,39 +1086,10 @@ if not st.session_state.get('auth_user'):
                         log_audit('LOGIN_FAILED', detail=f"Failed sign-in for username '{_u.strip()[:40]}'",
                                   user=_u.strip()[:40] or 'unknown', role='n/a')
                         st.error("Incorrect username or password.")
-    st.stop()
-# ── Login gate ──────────────────────────────────────────────────────────────
-if not st.session_state.get('auth_user'):
-    st.session_state.setdefault('login_failures', 0)
-    _l, _m, _r = st.columns([1, 1.2, 1])
-    with _m:
-        st.markdown("<div style='text-align:center;margin-top:60px'>"
-                    "<h1 style='margin-bottom:0'>DineData</h1>"
-                    "<p style='color:#8A7968'>Kôfētala Bistro — please sign in</p></div>", unsafe_allow_html=True)
-        with st.container(border=True):
-            if st.session_state.login_failures >= MAX_LOGIN_ATTEMPTS:
-                st.error("Too many failed attempts. Refresh the page to try again.")
-            else:
-                with st.form("login_form"):
-                    _u = st.text_input("Username")
-                    _p = st.text_input("Password", type="password")
-                    _go = st.form_submit_button("Sign in", use_container_width=True)
-                if _go:
-                    _acct = verify_login(_u, _p)
-                    if _acct:
-                        st.session_state.auth_user = _acct['username']
-                        st.session_state.auth_name = _acct['full_name']
-                        st.session_state.auth_role = _acct['role']
-                        st.session_state.login_failures = 0
-                        st.session_state.default_pw_in_use = (
-                            _acct['username'] == DEFAULT_OWNER_USER and _p == DEFAULT_OWNER_PASS)
-                        log_audit('LOGIN', detail='Signed in')
-                        st.rerun()
-                    else:
-                        st.session_state.login_failures += 1
-                        log_audit('LOGIN_FAILED', detail=f"Failed sign-in for username '{_u.strip()[:40]}'",
-                                  user=_u.strip()[:40] or 'unknown', role='n/a')
-                        st.error("Incorrect username or password.")
+        st.markdown(
+            "<p style='text-align:center;color:#B0A392;font-size:12px;margin-top:14px'>"
+            "DineData &middot; Waste Reduction System</p>", unsafe_allow_html=True
+        )
     st.stop()
 
 # ── Load all data and models — database first, CSV fallback ────────────────
@@ -1115,7 +1136,7 @@ with st.sidebar:
         'Menu Performance',
         'Inventory Status',
         'Forecast & Predictions',
-        'Database',
+        'Import Data',
     ]
 
     if st.session_state.get('auth_role') == 'Owner':
@@ -1199,7 +1220,7 @@ with st.sidebar:
 # ── Stop if no sales data ─────────────────────────────────────────────────
 if sales_df is None:
     st.error("Sales data not found!")
-    st.info("Go to the Database page to upload your sales log, or check that Data_Cleaning/kofe_tala_sales_data.csv exists.")
+    st.info("Go to the Import Data page to upload your sales log, or check that Data_Cleaning/kofe_tala_sales_data.csv exists.")
     st.stop()
 
 # ============================================================================
@@ -1292,7 +1313,7 @@ if page == 'Dashboard Overview':
 
     # ── Reuse the same DB-first dataframes loaded once near the top of this
     # file (identical source used by every other page), instead of separate
-    # loaders — keeps record counts always in sync with the Database page
+    # loaders — keeps record counts always in sync with the Import Data page
     # after an upload or delete.
     overview_waste = waste_df.copy() if waste_df is not None else pd.DataFrame()
     overview_sales = sales_df.copy() if sales_df is not None else pd.DataFrame()
@@ -1391,7 +1412,7 @@ if page == 'Dashboard Overview':
                         f"See <b>Sales Analytics</b> for the full breakdown."
                     )
         else:
-            st.info("No sales data yet. Go to the Database page to upload your sales log.")
+            st.info("No sales data yet. Go to the Import Data page to upload your sales log.")
 
     st.markdown("")
 
@@ -1499,7 +1520,7 @@ if page == 'Dashboard Overview':
                         'warn' if _direction == 'increasing' else 'good'
                     )
         else:
-            st.info("No waste data yet. Go to the Database page to upload your waste log.")
+            st.info("No waste data yet. Go to the Import Data page to upload your waste log.")
 
     st.markdown("")
 
@@ -1554,7 +1575,7 @@ if page == 'Dashboard Overview':
                     'warn' if urgent_ct > 0 else 'good'
                 )
         else:
-            st.info("No inventory data yet. Go to the Database page to upload your inventory records.")
+            st.info("No inventory data yet. Go to the Import Data page to upload your inventory records.")
 
     st.markdown("")
 
@@ -1609,7 +1630,7 @@ if page == 'Dashboard Overview':
                 f"See <b>Menu Performance</b> for Keep/Improve/Reconsider recommendations."
             )
         else:
-            st.info("No menu data yet. Go to the Database page to upload your menu items.")
+            st.info("No menu data yet. Go to the Import Data page to upload your menu items.")
 
 # ============================================================================
 # PAGE 2: SALES ANALYTICS
@@ -1618,7 +1639,7 @@ if page == 'Dashboard Overview':
 elif page == 'Sales Analytics':
 
     st.title("Sales Analytics")
-    st.caption("To add new sales records, go to the **Database** page — all data uploads now happen there.")
+    st.caption("To add new sales records, go to the **Import Data** page — all data uploads now happen there.")
 
     def _sa_apply_filters(base_df, key_prefix):
         """Renders its own Year/Quarter/Month filter row (Month options
@@ -1946,7 +1967,7 @@ elif page == 'Sales Analytics':
 elif page == 'Waste Analytics':
 
     st.title("Waste Analytics")
-    st.caption("To add new waste records, go to the **Database** page — all data uploads now happen there.")
+    st.caption("To add new waste records, go to the **Import Data** page — all data uploads now happen there.")
 
     # ── WASTE DATA FILE PATH — saved in Data_Cleaning folder ─────────────
     WASTE_FILE = os.path.join(DATA_CLEANING_DIR, 'kofe_tala_waste_data.csv')
@@ -1970,7 +1991,7 @@ elif page == 'Waste Analytics':
 
     # ── Current Waste Data + Analytics ─────────────────────────
     # Prefer the same DB-first waste_df used by Dashboard Overview and the
-    # Database page, so a delete/edit made on the Database page (which only
+    # Import Data page, so a delete/edit made on the Import Data page (which only
     # touches the database, not this CSV) is reflected here immediately too.
     display_waste = waste_df if db_available() else existing_waste
 
@@ -2336,12 +2357,12 @@ elif page == 'Waste Analytics':
         )
 
     else:
-        st.info("No waste data yet. Go to the Database page to upload your waste log.")
+        st.info("No waste data yet. Go to the Import Data page to upload your waste log.")
 
 elif page == 'Menu Performance':
 
     st.title("Menu Performance")
-    st.caption("To add or update menu items or sales records, go to the **Database** page — all data uploads now happen there.")
+    st.caption("To add or update menu items or sales records, go to the **Import Data** page — all data uploads now happen there.")
 
     PERF_COLORS = {
         'Keep':       EARTH['success'],
@@ -2580,7 +2601,7 @@ elif page == 'Menu Performance':
     else:
         st.info(
             "No items to display yet. This summary is calculated from **sales transactions** — "
-            "go to the Database page to add your sales log."
+            "go to the Import Data page to add your sales log."
         )
 
     st.markdown("")
@@ -2768,7 +2789,7 @@ elif page == 'Menu Performance':
 elif page == 'Inventory Status':
 
     st.title("Inventory Status")
-    st.caption("To add new inventory records, go to the **Database** page — all data uploads now happen there.")
+    st.caption("To add new inventory records, go to the **Import Data** page — all data uploads now happen there.")
 
     # Alert level colors (renamed from Risk)
     ALERT_COLORS = {
@@ -2998,7 +3019,7 @@ elif page == 'Inventory Status':
                     f"<b>{len(restock_now)}</b> ingredient(s) need restocking right now, "
                     f"<b>{len(restock_soon)}</b> should be reordered this week, and "
                     f"<b>{len(well_stocked)}</b> are currently well stocked. "
-                    "To add a brand-new ingredient that isn't tracked yet, upload it on the Database page — "
+                    "To add a brand-new ingredient that isn't tracked yet, upload it on the Import Data page — "
                     "it will show up here once it has a purchase record."
                 )
             else:
@@ -3193,7 +3214,7 @@ elif page == 'Inventory Status':
         )
 
     else:
-        st.info("No inventory data yet. Go to the Database page to upload your inventory records.")
+        st.info("No inventory data yet. Go to the Import Data page to upload your inventory records.")
 
 # ============================================================================
 # PAGE 6: FORECAST & PREDICTIONS
@@ -3219,7 +3240,7 @@ elif page == 'Forecast & Predictions':
         st.warning("Run `python ML_Models/ml_models.py` to train models first.")
 
     # ── Auto-load existing waste data ─────────────────────────────────────
-    # No upload needed here — data comes from the Database page uploader
+    # No upload needed here — data comes from the Import Data page uploader
     # Predictions auto-refresh daily based on today's date
     WASTE_FILE = os.path.join(DATA_CLEANING_DIR, 'kofe_tala_waste_data.csv')
 
@@ -3250,7 +3271,7 @@ elif page == 'Forecast & Predictions':
         waste_input = None
 
     if waste_input is None or len(waste_input) == 0:
-        st.info("No waste data found. Go to the Database page to upload your waste records first.")
+        st.info("No waste data found. Go to the Import Data page to upload your waste records first.")
         st.stop()
 
     # ── Run all 4 RF models on waste data ─────────────────────────────────
@@ -3470,7 +3491,7 @@ elif page == 'Forecast & Predictions':
                 top_by_cat = pd.DataFrame(columns=['category', 'item_name', 'avg_daily_qty'])
 
             if len(top_by_cat) == 0:
-                st.info("Not enough sales history yet — upload more sales records on the Database page to see this guide.")
+                st.info("Not enough sales history yet — upload more sales records on the Import Data page to see this guide.")
             else:
                 # Single-row flexbox HTML — guarantees all cards same height
                 cards_html = "<div style='display:flex;gap:10px;margin-bottom:16px'>"
@@ -3716,7 +3737,7 @@ elif page == 'Forecast & Predictions':
             else:
                 st.info("Not enough inventory history to build a restock guide yet.")
         else:
-            st.info("No inventory data found. Go to the Database page to upload inventory records first.")
+            st.info("No inventory data found. Go to the Import Data page to upload inventory records first.")
 
     st.markdown("")
 
@@ -3828,7 +3849,7 @@ elif page == 'Forecast & Predictions':
             if raw_source is None:
                 st.info(
                     f"No {'waste' if source_type == 'waste' else 'sales'} data with dates "
-                    "found. Upload records on the Database page first."
+                    "found. Upload records on the Import Data page first."
                 )
                 return
 
@@ -4056,12 +4077,12 @@ elif page == 'Forecast & Predictions':
     st.markdown("")
     _render_forecast_metric('Sales Revenue', 'sales', 'fc_salesrev')
 
-elif page == 'Database':
+elif page == 'Import Data':
 
     hero_banner(
         "Business Records",
-        "Database",
-        "View, filter, and manage all data stored in the DineData system."
+        "Import Data",
+        "Upload new records, review what is stored, and archive or restore entries."
     )
 
     # ============================================================================
@@ -4373,12 +4394,13 @@ elif page == 'Database':
     else:
         conn = get_db_connection()
 
-        # ── Record count summary cards ─────────────────────────────────────
+        # ── Record counts (active records only — archived rows are hidden
+        # from these summary cards, and from every chart/analytics page) ──
         try:
-            sales_count = conn.execute("SELECT COUNT(*) FROM FACT_SALES").fetchone()[0]
-            waste_count = conn.execute("SELECT COUNT(*) FROM FACT_WASTE").fetchone()[0]
-            inv_count   = conn.execute("SELECT COUNT(*) FROM FACT_INVENTORY").fetchone()[0]
-            menu_count  = conn.execute("SELECT COUNT(*) FROM DIM_ITEM").fetchone()[0]
+            sales_count = conn.execute("SELECT COUNT(*) FROM FACT_SALES WHERE COALESCE(is_archived,0)=0").fetchone()[0]
+            waste_count = conn.execute("SELECT COUNT(*) FROM FACT_WASTE WHERE COALESCE(is_archived,0)=0").fetchone()[0]
+            inv_count   = conn.execute("SELECT COUNT(*) FROM FACT_INVENTORY WHERE COALESCE(is_archived,0)=0").fetchone()[0]
+            menu_count  = conn.execute("SELECT COUNT(*) FROM DIM_ITEM WHERE COALESCE(is_archived,0)=0").fetchone()[0]
         except Exception:
             sales_count = waste_count = inv_count = menu_count = 0
 
@@ -4388,751 +4410,267 @@ elif page == 'Database':
         with c3: stat_card("Inventory Records", f"{inv_count:,}")
         with c4: stat_card("Menu Items",        f"{menu_count:,}")
 
+        try:
+            archived_total = sum(
+                conn.execute(f"SELECT COUNT(*) FROM {t} WHERE is_archived = 1").fetchone()[0]
+                for t in ARCHIVE_TABLES
+            )
+            if archived_total:
+                st.caption(f"{archived_total:,} archived record(s) are hidden from all analytics. "
+                           "Open a tab's **Archived** view below to review or restore them.")
+        except Exception:
+            pass
+
         st.markdown("")
 
-        month_list = [
-            'All','January','February','March','April','May','June',
-            'July','August','September','October','November','December'
-        ]
-        mn_map = {m: i+1 for i, m in enumerate(month_list[1:])}
-        q_map  = {'Q1':1,'Q2':2,'Q3':3,'Q4':4}
+        # ────────────────────────────────────────────────────────────────
+        # Archive-record helpers. Records are never deleted from here —
+        # "Archive" flips is_archived=1 so the record disappears from every
+        # chart, KPI, and forecast, but stays in the database and can be
+        # brought back from the Archived view at any time.
+        # ────────────────────────────────────────────────────────────────
+        def _py(v):
+            """Convert numpy/pandas scalars to plain Python so SQLite accepts them."""
+            try:
+                if pd.isna(v):
+                    return None
+            except (TypeError, ValueError):
+                pass
+            return v.item() if hasattr(v, 'item') else v
 
-        # ── Tabs — one per data type ───────────────────────────────────────
+        def _set_archived(conn, cfg, keys, archive):
+            now, who = _now_ph(), st.session_state.get('auth_user', 'unknown')
+            for i in range(0, len(keys), 500):
+                chunk = keys[i:i + 500]
+                q = ",".join("?" * len(chunk))
+                if archive:
+                    conn.execute(f"UPDATE {cfg['table']} SET is_archived=1, archived_at=?, archived_by=? "
+                                 f"WHERE {cfg['pk']} IN ({q})", [now, who] + chunk)
+                else:
+                    conn.execute(f"UPDATE {cfg['table']} SET is_archived=0, archived_at=NULL, archived_by=NULL "
+                                 f"WHERE {cfg['pk']} IN ({q})", chunk)
+            conn.commit()
+            return len(keys)
+
+        def _upd_sales(c, r):
+            c.execute("UPDATE FACT_SALES SET quantity=?, price=?, total=?, cost=? WHERE sale_key=?",
+                      (r['Qty Sold'], r['Price'], r['Revenue'], r['Cost'], int(r['_key'])))
+
+        def _upd_waste(c, r):
+            c.execute("UPDATE FACT_WASTE SET quantity_wasted=?, cost_per_item=?, total_waste_cost=? WHERE waste_key=?",
+                      (r['Units Wasted'], r['Cost per Item'], r['Total Waste Cost'], int(r['_key'])))
+
+        def _upd_inv(c, r):
+            try:
+                days = (pd.to_datetime(r['Expiry Date']) - pd.Timestamp.now().normalize()).days
+            except Exception:
+                days = None
+            c.execute("UPDATE FACT_INVENTORY SET quantity=?, cost_per_unit=?, total_cost=?, days_until_expiration=? "
+                      "WHERE inventory_key=?",
+                      (r['Quantity'], r['Cost per Unit'], r['Total Cost'], days, int(r['_key'])))
+
+        def _upd_menu(c, r):
+            p, co = r['Price'], r['Cost']
+            margin = (p - co) if (p is not None and co is not None) else None
+            c.execute("UPDATE DIM_ITEM SET price=?, cost=?, profit_margin=? WHERE item_key=?",
+                      (p, co, margin, int(r['_key'])))
+
+        SALES_CFG = dict(
+            key='s', label='Sales', table='FACT_SALES', alias='s', pk='sale_key',
+            select_sql=("s.sale_key AS [_key], d.date AS [Date], d.day_name AS [Day], i.item_name AS [Item], "
+                        "i.category AS [Category], s.quantity AS [Qty Sold], s.price AS [Price], "
+                        "s.total AS [Revenue], s.cost AS [Cost]"),
+            from_sql=("FROM FACT_SALES s JOIN DIM_DATE d ON s.date_key = d.date_key "
+                      "JOIN DIM_ITEM i ON s.item_key = i.item_key"),
+            date_expr='d.date', order_sql='d.date DESC',
+            filter_label='Category', filter_expr='i.category',
+            filter_sql="SELECT DISTINCT category FROM DIM_ITEM WHERE category IS NOT NULL ORDER BY category",
+            editable=['Qty Sold', 'Price', 'Revenue', 'Cost'], update_row=_upd_sales,
+            audit_cols=['Date', 'Item'],
+        )
+        WASTE_CFG = dict(
+            key='w', label='Waste', table='FACT_WASTE', alias='w', pk='waste_key',
+            select_sql=("w.waste_key AS [_key], d.date AS [Date], d.day_name AS [Day], i.item_name AS [Item], "
+                        "i.category AS [Category], w.quantity_wasted AS [Units Wasted], "
+                        "r.reason_name AS [Waste Reason], w.cost_per_item AS [Cost per Item], "
+                        "w.total_waste_cost AS [Total Waste Cost]"),
+            from_sql=("FROM FACT_WASTE w JOIN DIM_DATE d ON w.date_key = d.date_key "
+                      "JOIN DIM_ITEM i ON w.item_key = i.item_key "
+                      "JOIN DIM_WASTE_REASON r ON w.reason_key = r.reason_key"),
+            date_expr='d.date', order_sql='d.date DESC',
+            filter_label='Waste Reason', filter_expr='r.reason_name',
+            filter_sql="SELECT reason_name FROM DIM_WASTE_REASON ORDER BY reason_name",
+            editable=['Units Wasted', 'Cost per Item', 'Total Waste Cost'], update_row=_upd_waste,
+            audit_cols=['Date', 'Item'],
+        )
+        INV_CFG = dict(
+            key='i', label='Inventory', table='FACT_INVENTORY', alias='inv', pk='inventory_key',
+            select_sql=("inv.inventory_key AS [_key], substr(d.date,1,10) AS [Purchase Date], "
+                        "substr(inv.expiration_date,1,10) AS [Expiry Date], ing.ingredient_name AS [Ingredient], "
+                        "ing.unit AS [Unit], inv.quantity AS [Quantity], inv.cost_per_unit AS [Cost per Unit], "
+                        "inv.total_cost AS [Total Cost], al.alert_name AS [Alert Level], "
+                        "CASE WHEN al.alert_name = 'Expired' THEN 'Discard' "
+                        "WHEN al.alert_name = 'Out of Stock' THEN 'Restock' ELSE '—' END AS [Action]"),
+            from_sql=("FROM FACT_INVENTORY inv JOIN DIM_DATE d ON inv.date_key = d.date_key "
+                      "JOIN DIM_INGREDIENT ing ON inv.ingredient_key = ing.ingredient_key "
+                      "JOIN DIM_ALERT_LEVEL al ON inv.alert_key = al.alert_key"),
+            date_expr='d.date', order_sql='d.date DESC',
+            filter_label='Alert Level', filter_expr='al.alert_name',
+            filter_sql="SELECT alert_name FROM DIM_ALERT_LEVEL ORDER BY alert_key",
+            editable=['Quantity', 'Cost per Unit', 'Total Cost'], update_row=_upd_inv,
+            audit_cols=['Purchase Date', 'Ingredient'],
+        )
+        MENU_CFG = dict(
+            key='m', label='Menu', table='DIM_ITEM', alias='i', pk='item_key',
+            select_sql=("i.item_key AS [_key], i.item_name AS [Item], i.category AS [Category], "
+                        "i.price AS [Price], i.cost AS [Cost], i.profit_margin AS [Profit Margin]"),
+            from_sql="FROM DIM_ITEM i",
+            date_expr=None, order_sql='i.category, i.item_name',
+            filter_label='Category', filter_expr='i.category',
+            filter_sql="SELECT DISTINCT category FROM DIM_ITEM WHERE category IS NOT NULL ORDER BY category",
+            editable=['Price', 'Cost'], update_row=_upd_menu,
+            audit_cols=['Item'],
+        )
+
+        def render_records_tab(conn, cfg):
+            """One tab: Active / Archived toggle, an editable table (Active
+            view only), and Archive / Restore for selected rows or every row
+            matching the current filter. Nothing is ever deleted here."""
+            k, alias = cfg['key'], cfg['alias']
+            view = st.radio("Show", ['Active', 'Archived'], horizontal=True, key=f'{k}_view')
+            flag = 0 if view == 'Active' else 1
+            verb, action = ('Archive', 'ARCHIVE') if flag == 0 else ('Restore', 'RESTORE')
+            st.caption(
+                "Active records feed every chart and forecast. Archived records are hidden from "
+                "them but kept safely and can be restored."
+                if flag == 0 else
+                "Archived records are hidden from all analytics. Select rows and click Restore to bring them back."
+            )
+
+            where, params = [f"COALESCE({alias}.is_archived, 0) = ?"], [flag]
+
+            fc1, fc2 = st.columns([2, 1])
+            with fc1:
+                if cfg.get('date_expr'):
+                    try:
+                        mn, mx = conn.execute(f"SELECT MIN({cfg['date_expr']}), MAX({cfg['date_expr']}) {cfg['from_sql']}").fetchone()
+                        min_d = pd.to_datetime(mn).date() if mn else date(2020, 1, 1)
+                        max_d = pd.to_datetime(mx).date() if mx else date.today()
+                    except Exception:
+                        min_d, max_d = date(2020, 1, 1), date.today()
+                    rng = st.date_input("Date Range", value=(min_d, max_d), min_value=min_d, max_value=max_d, key=f'{k}_dates')
+                    if isinstance(rng, tuple) and len(rng) == 2:
+                        where.append(f"{cfg['date_expr']} BETWEEN ? AND ?")
+                        params += [str(rng[0]), str(rng[1])]
+                    elif isinstance(rng, date):
+                        where.append(f"{cfg['date_expr']} = ?")
+                        params.append(str(rng))
+            with fc2:
+                if cfg.get('filter_expr'):
+                    try:
+                        opts = ['All'] + [r[0] for r in conn.execute(cfg['filter_sql']).fetchall() if r[0]]
+                    except Exception:
+                        opts = ['All']
+                    sel = st.selectbox(cfg['filter_label'], opts, key=f'{k}_filter')
+                    if sel != 'All':
+                        where.append(f"{cfg['filter_expr']} = ?")
+                        params.append(sel)
+
+            where_sql = "WHERE " + " AND ".join(where)
+            sq = f"SELECT {cfg['select_sql']} {cfg['from_sql']} {where_sql} ORDER BY {cfg['order_sql']}"
+            total = conn.execute(f"SELECT COUNT(*) FROM ({sq})", params).fetchone()[0]
+
+            if total == 0:
+                st.info("No archived records here." if flag else "No records match this filter.")
+                return
+
+            n = st.slider("Records to show", 10, 500, 50, 10, key=f'{k}_rows')
+            df = pd.read_sql(f"{sq} LIMIT {n}", conn, params=params)
+            st.caption(f"Showing {len(df):,} of {total:,} {view.lower()} records")
+
+            show = df.copy()
+            show.insert(0, 'Select', False)
+            editable = [] if flag else cfg['editable']
+            edited = st.data_editor(
+                show, use_container_width=True, hide_index=True, key=f'{k}_editor_{flag}',
+                column_config={'Select': st.column_config.CheckboxColumn('Select', default=False), '_key': None},
+                disabled=[c for c in show.columns if c != 'Select' and c not in editable],
+            )
+            picked = edited[edited['Select'] == True]
+            sel_keys = [int(x) for x in picked['_key']]
+
+            b1, b2, b3, b4 = st.columns([1, 1.3, 1.5, 1.5])
+
+            with b1:
+                if flag == 0 and st.button("Save Changes", type="primary", key=f'{k}_save'):
+                    try:
+                        for _, row in edited.iterrows():
+                            cfg['update_row'](conn, {c: _py(v) for c, v in row.items()})
+                        conn.commit()
+                        log_audit('EDIT', cfg['label'], len(edited), f"Saved edits to {cfg['label'].lower()} records")
+                        st.cache_data.clear()
+                        st.success("Changes saved successfully!")
+                    except Exception as e:
+                        st.error(f"Could not save: {e}")
+
+            with b2:
+                if st.button(f"{verb} selected ({len(sel_keys)})", key=f'{k}_sel_btn', disabled=len(sel_keys) == 0):
+                    done = _set_archived(conn, cfg, sel_keys, archive=(flag == 0))
+                    log_audit(action, cfg['label'], done, "Selected rows: " + rows_summary(picked, cfg['audit_cols']))
+                    st.cache_data.clear()
+                    st.rerun()
+
+            with b3:
+                if st.button(f"{verb} all filtered ({total:,})", key=f'{k}_all_btn'):
+                    # Freeze the exact keys now, so the confirm step acts on
+                    # precisely what was shown — not on a filter that may
+                    # have changed by the time the confirm click lands.
+                    st.session_state[f'{k}_bulk_keys'] = [
+                        r[0] for r in conn.execute(
+                            f"SELECT {alias}.{cfg['pk']} {cfg['from_sql']} {where_sql}", params
+                        ).fetchall()
+                    ]
+                    st.session_state[f'{k}_bulk_mode'] = flag
+
+            with b4:
+                st.download_button(
+                    f"Download {view} as CSV", data=df.drop(columns=['_key']).to_csv(index=False).encode('utf-8'),
+                    file_name=f"{cfg['label'].lower()}_{view.lower()}.csv", mime="text/csv", key=f'{k}_dl'
+                )
+
+            bulk = st.session_state.get(f'{k}_bulk_keys')
+            if bulk and st.session_state.get(f'{k}_bulk_mode') == flag:
+                st.warning(
+                    f"{verb} **{len(bulk):,}** record(s)? " +
+                    ("They will be hidden from all analytics, but you can restore them from the Archived view."
+                     if flag == 0 else "They will appear in the analytics again.")
+                )
+                y, x = st.columns(2)
+                with y:
+                    if st.button("Confirm", type="primary", key=f'{k}_bulk_ok', use_container_width=True):
+                        done = _set_archived(conn, cfg, bulk, archive=(flag == 0))
+                        log_audit(action, cfg['label'], done, f"Bulk {verb.lower()} of filtered records")
+                        st.session_state.pop(f'{k}_bulk_keys', None)
+                        st.cache_data.clear()
+                        st.rerun()
+                with x:
+                    if st.button("Cancel", key=f'{k}_bulk_no', use_container_width=True):
+                        st.session_state.pop(f'{k}_bulk_keys', None)
+                        st.rerun()
+
         with st.container(border=True):
             st.markdown("### View Records")
-
-            tab1, tab2, tab3, tab4 = st.tabs([
-                "Sales", "Waste Records", "Inventory", "Menu Items"
-            ])
-
-            # ─────────────────────────────────────────────────────────────
-            # TAB 1: SALES (editable — now that Sales has an upload feature)
-            # ─────────────────────────────────────────────────────────────
+            st.caption("Records are never permanently deleted from here — use Archive to hide a record from every chart and forecast, and Restore to bring it back.")
+            tab1, tab2, tab3, tab4 = st.tabs(["Sales", "Waste Records", "Inventory", "Menu Items"])
             with tab1:
-                st.caption("All sales transactions. You can correct or remove wrong entries here.")
-
-                try:
-                    minmax_s = conn.execute(
-                        "SELECT MIN(d.date), MAX(d.date) FROM FACT_SALES s "
-                        "JOIN DIM_DATE d ON s.date_key=d.date_key"
-                    ).fetchone()
-                    min_date_s = pd.to_datetime(minmax_s[0]).date() if minmax_s and minmax_s[0] else date(2020, 1, 1)
-                    max_date_s = pd.to_datetime(minmax_s[1]).date() if minmax_s and minmax_s[1] else date.today()
-                except Exception:
-                    min_date_s, max_date_s = date(2020, 1, 1), date.today()
-                try:
-                    cats = ['All'] + [r[0] for r in conn.execute(
-                        "SELECT DISTINCT category FROM DIM_ITEM ORDER BY category"
-                    ).fetchall() if r[0]]
-                except Exception:
-                    cats = ['All']
-
-                f1, f2 = st.columns([2, 1])
-                with f1:
-                    s_date_range = st.date_input(
-                        "Date Range", value=(min_date_s, max_date_s),
-                        min_value=min_date_s, max_value=max_date_s, key='s_daterange'
-                    )
-                with f2:
-                    s_cat = st.selectbox("Category", cats, key='s_cat')
-
-                sw = []
-                if isinstance(s_date_range, tuple) and len(s_date_range) == 2:
-                    sw.append(f"d.date BETWEEN '{s_date_range[0]}' AND '{s_date_range[1]}'")
-                elif isinstance(s_date_range, date):
-                    sw.append(f"d.date = '{s_date_range}'")
-                if s_cat != 'All': sw.append(f"i.category = '{s_cat}'")
-                sw_sql = ("WHERE " + " AND ".join(sw)) if sw else ""
-
-                sq = (
-                    "SELECT d.date AS [Date], d.day_name AS [Day], "
-                    "i.item_name AS [Item], i.category AS [Category], "
-                    "s.quantity AS [Qty Sold], s.price AS [Price], "
-                    "s.total AS [Revenue], s.cost AS [Cost] "
-                    "FROM FACT_SALES s "
-                    "JOIN DIM_DATE d ON s.date_key = d.date_key "
-                    "JOIN DIM_ITEM i ON s.item_key = i.item_key "
-                    f"{sw_sql} ORDER BY d.date DESC"
-                )
-                try:
-                    total_s = conn.execute(f"SELECT COUNT(*) FROM ({sq})").fetchone()[0]
-                    n_s = st.slider("Records to show", 10, 500, 50, 10, key='s_rows')
-                    df_s = pd.read_sql(f"{sq} LIMIT {n_s}", conn)
-                    st.caption(f"Showing {len(df_s):,} of {total_s:,} records")
-
-                    edited_s = st.data_editor(
-                        df_s, use_container_width=True, hide_index=True,
-                        key='s_editor', num_rows="dynamic",
-                        disabled=["Date", "Day", "Item", "Category"]
-                    )
-
-                    # ── Action buttons: Save, Delete by filter, Download ───────
-                    sc1, sc2, sc3 = st.columns([1, 1, 2])
-
-                    with sc1:
-                        if st.button("Save Changes", type="primary", key='s_save'):
-                            try:
-                                for _, row in edited_s.iterrows():
-                                    conn.execute(
-                                        "UPDATE FACT_SALES SET quantity=?, price=?, total=?, cost=? "
-                                        "WHERE sale_key IN ("
-                                        "SELECT s.sale_key FROM FACT_SALES s "
-                                        "JOIN DIM_DATE d ON s.date_key=d.date_key "
-                                        "JOIN DIM_ITEM i ON s.item_key=i.item_key "
-                                        "WHERE d.date=? AND i.item_name=? AND s.total=?)",
-                                        (row.get('Qty Sold'), row.get('Price'), row.get('Revenue'),
-                                         row.get('Cost'), row.get('Date'), row.get('Item'), row.get('Revenue'))
-                                    )
-                                conn.commit()
-                                log_audit('EDIT', 'Sales', len(edited_s), 'Saved edits to sales records in the table view')
-                                st.success("Changes saved successfully!")
-                            except Exception as e:
-                                st.error(f"Could not save: {e}")
-
-                    with sc2:
-                        # Same freeze-before-confirm safety pattern as Waste/Inventory
-                        if sw_sql:
-                            del_label_s = f"Delete filtered ({total_s:,} records)"
-                        else:
-                            del_label_s = "Delete All Records"
-
-                        if st.button(del_label_s, key='s_del_filter'):
-                            st.session_state['s_confirm_del']      = True
-                            st.session_state['s_del_sql_frozen']   = sw_sql
-                            st.session_state['s_del_count_frozen'] = total_s
-
-                        if st.session_state.get('s_confirm_del', False):
-                            frozen_sql_s   = st.session_state.get('s_del_sql_frozen', sw_sql)
-                            frozen_count_s = st.session_state.get('s_del_count_frozen', total_s)
-
-                            if not frozen_sql_s:
-                                st.error(
-                                    "⚠️ No filter is applied — this would delete "
-                                    f"ALL {frozen_count_s:,} sales records. Type "
-                                    "DELETE ALL below to confirm, or Cancel."
-                                )
-                                confirm_text_s = st.text_input(
-                                    "Type DELETE ALL to confirm", key='s_del_all_text'
-                                )
-                                proceed_allowed_s = (confirm_text_s.strip() == "DELETE ALL")
-                            else:
-                                st.warning(
-                                    f"This will permanently delete **{frozen_count_s:,} records** "
-                                    f"matching the filter you selected. This cannot be undone."
-                                )
-                                proceed_allowed_s = True
-
-                            scd1, scd2 = st.columns(2)
-                            with scd1:
-                                if st.button("Delete", type="primary", key='s_del_confirm',
-                                             use_container_width=True, disabled=not proceed_allowed_s):
-                                    try:
-                                        del_sql_s = (
-                                            "DELETE FROM FACT_SALES WHERE sale_key IN ("
-                                            "SELECT s.sale_key FROM FACT_SALES s "
-                                            "JOIN DIM_DATE d ON s.date_key=d.date_key "
-                                            "JOIN DIM_ITEM i ON s.item_key=i.item_key "
-                                            f"{frozen_sql_s})"
-                                        )
-                                        conn.execute(del_sql_s)
-                                        conn.commit()
-                                        log_audit('DELETE', 'Sales', frozen_count_s, 'Bulk delete by filter: ' + (frozen_sql_s or 'NO FILTER (all records)'))
-                                        st.session_state['s_confirm_del'] = False
-                                        st.success(f"Deleted {frozen_count_s:,} records successfully!")
-                                        st.cache_data.clear()
-                                        st.rerun()
-                                    except Exception as e:
-                                        st.error(f"Could not delete: {e}")
-                            with scd2:
-                                if st.button("Cancel", key='s_del_cancel', use_container_width=True):
-                                    st.session_state['s_confirm_del'] = False
-                                    st.rerun()
-
-                    with sc3:
-                        st.download_button(
-                            "Download Sales as CSV",
-                            data=df_s.to_csv(index=False).encode("utf-8"),
-                            file_name="sales_records.csv", mime="text/csv", key="dl_s"
-                    )
-
-                    # ── Delete individual selected rows ────────────────────
-                    st.markdown("---")
-                    st.markdown("**Delete Individual Records**")
-                    st.caption("Select rows to delete by checking the box on the left.")
-
-                    df_s_select = df_s.copy()
-                    df_s_select.insert(0, 'Select', False)
-                    edited_s_sel = st.data_editor(
-                        df_s_select,
-                        use_container_width=True,
-                        hide_index=True,
-                        key='s_sel_editor',
-                        column_config={
-                            'Select': st.column_config.CheckboxColumn('Select', default=False)
-                        },
-                        disabled=[c for c in df_s_select.columns if c != 'Select']
-                    )
-                    selected_rows_s = edited_s_sel[edited_s_sel['Select'] == True]
-                    if len(selected_rows_s) > 0:
-                        st.caption(f"{len(selected_rows_s)} row(s) selected")
-                        if st.button(f"Delete {len(selected_rows_s)} Selected Row(s)", type="primary", key='s_del_rows'):
-                            try:
-                                for _, row in selected_rows_s.iterrows():
-                                    conn.execute(
-                                        "DELETE FROM FACT_SALES WHERE sale_key IN ("
-                                        "SELECT s.sale_key FROM FACT_SALES s "
-                                        "JOIN DIM_DATE d ON s.date_key=d.date_key "
-                                        "JOIN DIM_ITEM i ON s.item_key=i.item_key "
-                                        "WHERE d.date=? AND i.item_name=? AND s.total=?)",
-                                        (row.get('Date'), row.get('Item'), row.get('Revenue'))
-                                    )
-                                conn.commit()
-                                log_audit('DELETE', 'Sales', len(selected_rows_s), 'Selected rows: ' + rows_summary(selected_rows_s, ['Date','Item']))
-                                st.success(f"Deleted {len(selected_rows_s)} record(s)!")
-                                st.cache_data.clear()
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Could not delete: {e}")
-                except Exception as e:
-                    st.error(f"Could not load sales: {e}")
-
-            # ─────────────────────────────────────────────────────────────
-            # TAB 2: WASTE RECORDS (editable)
-            # ─────────────────────────────────────────────────────────────
+                render_records_tab(conn, SALES_CFG)
             with tab2:
-                st.caption("Waste entries uploaded by staff. You can correct any wrong entries here.")
-
-                try:
-                    minmax_w = conn.execute(
-                        "SELECT MIN(d.date), MAX(d.date) FROM FACT_WASTE w "
-                        "JOIN DIM_DATE d ON w.date_key=d.date_key"
-                    ).fetchone()
-                    min_date_w = pd.to_datetime(minmax_w[0]).date() if minmax_w and minmax_w[0] else date(2020, 1, 1)
-                    max_date_w = pd.to_datetime(minmax_w[1]).date() if minmax_w and minmax_w[1] else date.today()
-                except Exception:
-                    min_date_w, max_date_w = date(2020, 1, 1), date.today()
-                try:
-                    reasons = ['All'] + [r[0] for r in conn.execute(
-                        "SELECT reason_name FROM DIM_WASTE_REASON ORDER BY reason_name"
-                    ).fetchall()]
-                except Exception:
-                    reasons = ['All']
-
-                f1, f2 = st.columns([2, 1])
-                with f1:
-                    w_date_range = st.date_input(
-                        "Date Range", value=(min_date_w, max_date_w),
-                        min_value=min_date_w, max_value=max_date_w, key='w_daterange'
-                    )
-                with f2:
-                    w_reason = st.selectbox("Waste Reason", reasons, key='w_reason')
-
-                ww = []
-                if isinstance(w_date_range, tuple) and len(w_date_range) == 2:
-                    ww.append(f"d.date BETWEEN '{w_date_range[0]}' AND '{w_date_range[1]}'")
-                elif isinstance(w_date_range, date):
-                    ww.append(f"d.date = '{w_date_range}'")
-                if w_reason  != 'All': ww.append(f"r.reason_name = '{w_reason}'")
-                ww_sql = ("WHERE " + " AND ".join(ww)) if ww else ""
-
-                wq = (
-                    "SELECT d.date AS [Date], d.day_name AS [Day], "
-                    "i.item_name AS [Item], i.category AS [Category], "
-                    "w.quantity_wasted AS [Units Wasted], "
-                    "r.reason_name AS [Waste Reason], "
-                    "w.cost_per_item AS [Cost per Item], "
-                    "w.total_waste_cost AS [Total Waste Cost] "
-                    "FROM FACT_WASTE w "
-                    "JOIN DIM_DATE d ON w.date_key = d.date_key "
-                    "JOIN DIM_ITEM i ON w.item_key = i.item_key "
-                    "JOIN DIM_WASTE_REASON r ON w.reason_key = r.reason_key "
-                    f"{ww_sql} ORDER BY d.date DESC"
-                )
-                try:
-                    total_w = conn.execute(f"SELECT COUNT(*) FROM ({wq})").fetchone()[0]
-                    n_w = st.slider("Records to show", 10, 500, 50, 10, key='w_rows')
-                    df_w = pd.read_sql(f"{wq} LIMIT {n_w}", conn)
-                    st.caption(f"Showing {len(df_w):,} of {total_w:,} records")
-
-                    edited_w = st.data_editor(
-                        df_w, use_container_width=True, hide_index=True,
-                        key='w_editor', num_rows="dynamic",
-                        disabled=["Date","Day","Item","Category","Waste Reason"]
-                    )
-
-                    # ── Action buttons: Save, Delete by filter, Download ───────
-                    wc1, wc2, wc3 = st.columns([1, 1, 2])
-
-                    with wc1:
-                        if st.button("Save Changes", type="primary", key='w_save'):
-                            try:
-                                for _, row in edited_w.iterrows():
-                                    conn.execute(
-                                        "UPDATE FACT_WASTE SET "
-                                        "quantity_wasted=?, cost_per_item=?, total_waste_cost=? "
-                                        "WHERE waste_key IN ("
-                                        "SELECT w.waste_key FROM FACT_WASTE w "
-                                        "JOIN DIM_DATE d ON w.date_key=d.date_key "
-                                        "JOIN DIM_ITEM i ON w.item_key=i.item_key "
-                                        "JOIN DIM_WASTE_REASON r ON w.reason_key=r.reason_key "
-                                        "WHERE d.date=? AND i.item_name=? AND r.reason_name=?)",
-                                        (row.get('Units Wasted'), row.get('Cost per Item'),
-                                         row.get('Total Waste Cost'), row.get('Date'),
-                                         row.get('Item'), row.get('Waste Reason'))
-                                    )
-                                conn.commit()
-                                log_audit('EDIT', 'Waste', len(edited_w), 'Saved edits to waste records in the table view')
-                                st.success("Changes saved successfully!")
-                            except Exception as e:
-                                st.error(f"Could not save: {e}")
-
-                    with wc2:
-                        # Delete by current filter — confirms before deleting.
-                        # CRITICAL: the filter (ww_sql) and count are FROZEN into
-                        # session_state the instant "Delete filtered" is clicked,
-                        # and the actual DELETE always uses that frozen value —
-                        # never the live filter state. This prevents a dangerous
-                        # bug where the widget's value could change between the
-                        # first click and the confirm click (e.g. the date range
-                        # briefly resolving to a single date mid-rerun), silently
-                        # turning the filter into "no filter" and deleting the
-                        # entire table instead of just the shown records.
-                        if ww_sql:
-                            del_label = f"Delete filtered ({total_w:,} records)"
-                        else:
-                            del_label = "Delete All Records"
-
-                        if st.button(del_label, key='w_del_filter'):
-                            st.session_state['w_confirm_del']      = True
-                            st.session_state['w_del_sql_frozen']   = ww_sql
-                            st.session_state['w_del_count_frozen'] = total_w
-
-                        if st.session_state.get('w_confirm_del', False):
-                            frozen_sql   = st.session_state.get('w_del_sql_frozen', ww_sql)
-                            frozen_count = st.session_state.get('w_del_count_frozen', total_w)
-
-                            # Hard safety net: never allow an unfiltered delete
-                            # to proceed silently — require typed confirmation.
-                            if not frozen_sql:
-                                st.error(
-                                    "⚠️ No filter is applied — this would delete "
-                                    f"ALL {frozen_count:,} waste records. Type "
-                                    "DELETE ALL below to confirm, or Cancel."
-                                )
-                                confirm_text = st.text_input(
-                                    "Type DELETE ALL to confirm", key='w_del_all_text'
-                                )
-                                proceed_allowed = (confirm_text.strip() == "DELETE ALL")
-                            else:
-                                st.warning(
-                                    f"This will permanently delete **{frozen_count:,} records** "
-                                    f"matching the filter you selected. This cannot be undone."
-                                )
-                                proceed_allowed = True
-
-                            cd1, cd2 = st.columns(2)
-                            with cd1:
-                                if st.button("Delete", type="primary", key='w_del_confirm',
-                                             use_container_width=True, disabled=not proceed_allowed):
-                                    try:
-                                        # Use the FROZEN filter — guaranteed to match
-                                        # what the user actually saw and agreed to.
-                                        del_sql = (
-                                            "DELETE FROM FACT_WASTE WHERE waste_key IN ("
-                                            "SELECT w.waste_key FROM FACT_WASTE w "
-                                            "JOIN DIM_DATE d ON w.date_key=d.date_key "
-                                            "JOIN DIM_ITEM i ON w.item_key=i.item_key "
-                                            "JOIN DIM_WASTE_REASON r ON w.reason_key=r.reason_key "
-                                            f"{frozen_sql})"
-                                        )
-                                        conn.execute(del_sql)
-                                        conn.commit()
-                                        log_audit('DELETE', 'Waste', frozen_count, 'Bulk delete by filter: ' + (frozen_sql or 'NO FILTER (all records)'))
-                                        st.session_state['w_confirm_del'] = False
-                                        st.success(f"Deleted {frozen_count:,} records successfully!")
-                                        st.cache_data.clear()
-                                        st.rerun()
-                                    except Exception as e:
-                                        st.error(f"Could not delete: {e}")
-                            with cd2:
-                                if st.button("Cancel", key='w_del_cancel', use_container_width=True):
-                                    st.session_state['w_confirm_del'] = False
-                                    st.rerun()
-
-                    with wc3:
-                        st.download_button(
-                            "Download Waste Records as CSV",
-                            data=df_w.to_csv(index=False).encode("utf-8"),
-                            file_name="waste_records.csv", mime="text/csv", key="dl_w"
-                        )
-
-                    # ── Delete individual selected rows ────────────────────
-                    st.markdown("---")
-                    st.markdown("**Delete Individual Records**")
-                    st.caption("Select rows to delete by checking the box on the left.")
-
-                    df_w_select = df_w.copy()
-                    df_w_select.insert(0, 'Select', False)
-                    edited_sel = st.data_editor(
-                        df_w_select,
-                        use_container_width=True,
-                        hide_index=True,
-                        key='w_sel_editor',
-                        column_config={
-                            'Select': st.column_config.CheckboxColumn('Select', default=False)
-                        },
-                        disabled=[c for c in df_w_select.columns if c != 'Select']
-                    )
-                    selected_rows = edited_sel[edited_sel['Select'] == True]
-                    if len(selected_rows) > 0:
-                        st.caption(f"{len(selected_rows)} row(s) selected")
-                        if st.button(f"Delete {len(selected_rows)} Selected Row(s)", type="primary", key='w_del_rows'):
-                            try:
-                                for _, row in selected_rows.iterrows():
-                                    conn.execute(
-                                        "DELETE FROM FACT_WASTE WHERE waste_key IN ("
-                                        "SELECT w.waste_key FROM FACT_WASTE w "
-                                        "JOIN DIM_DATE d ON w.date_key=d.date_key "
-                                        "JOIN DIM_ITEM i ON w.item_key=i.item_key "
-                                        "JOIN DIM_WASTE_REASON r ON w.reason_key=r.reason_key "
-                                        "WHERE d.date=? AND i.item_name=? AND r.reason_name=?)",
-                                        (row.get('Date'), row.get('Item'), row.get('Waste Reason'))
-                                    )
-                                conn.commit()
-                                log_audit('DELETE', 'Waste', len(selected_rows), 'Selected rows: ' + rows_summary(selected_rows, ['Date','Item']))
-                                st.success(f"Deleted {len(selected_rows)} record(s)!")
-                                st.cache_data.clear()
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Could not delete: {e}")
-                except Exception as e:
-                    st.error(f"Could not load waste records: {e}")
-
-            # ─────────────────────────────────────────────────────────────
-            # TAB 3: INVENTORY (editable)
-            # ─────────────────────────────────────────────────────────────
+                render_records_tab(conn, WASTE_CFG)
             with tab3:
-                st.caption("Ingredient purchase records. You can update quantities and costs here.")
-
-                try:
-                    minmax_i = conn.execute(
-                        "SELECT MIN(d.date), MAX(d.date) FROM FACT_INVENTORY inv "
-                        "JOIN DIM_DATE d ON inv.date_key=d.date_key"
-                    ).fetchone()
-                    min_date_i = pd.to_datetime(minmax_i[0]).date() if minmax_i and minmax_i[0] else date(2020, 1, 1)
-                    max_date_i = pd.to_datetime(minmax_i[1]).date() if minmax_i and minmax_i[1] else date.today()
-                except Exception:
-                    min_date_i, max_date_i = date(2020, 1, 1), date.today()
-                try:
-                    alerts = ['All'] + [r[0] for r in conn.execute(
-                        "SELECT alert_name FROM DIM_ALERT_LEVEL ORDER BY alert_key"
-                    ).fetchall()]
-                except Exception:
-                    alerts = ['All']
-
-                f1, f2 = st.columns([2, 1])
-                with f1:
-                    i_date_range = st.date_input(
-                        "Date Range", value=(min_date_i, max_date_i),
-                        min_value=min_date_i, max_value=max_date_i, key='i_daterange'
-                    )
-                with f2:
-                    i_alert = st.selectbox("Alert Level", alerts, key='i_alert')
-
-                iw = []
-                if isinstance(i_date_range, tuple) and len(i_date_range) == 2:
-                    iw.append(f"d.date BETWEEN '{i_date_range[0]}' AND '{i_date_range[1]}'")
-                elif isinstance(i_date_range, date):
-                    iw.append(f"d.date = '{i_date_range}'")
-                if i_alert   != 'All': iw.append(f"al.alert_name = '{i_alert}'")
-                iw_sql = ("WHERE " + " AND ".join(iw)) if iw else ""
-
-                iq = (
-                    "SELECT substr(d.date,1,10) AS [Purchase Date], "
-                    "substr(inv.expiration_date,1,10) AS [Expiry Date], "
-                    "ing.ingredient_name AS [Ingredient], ing.unit AS [Unit], "
-                    "inv.quantity AS [Quantity], "
-                    "inv.cost_per_unit AS [Cost per Unit], "
-                    "inv.total_cost AS [Total Cost], "
-                    "al.alert_name AS [Alert Level], "
-                    "CASE WHEN al.alert_name = 'Expired' THEN 'Discard' "
-                    "     WHEN al.alert_name = 'Out of Stock' THEN 'Restock' "
-                    "     ELSE '—' END AS [Action] "
-                    "FROM FACT_INVENTORY inv "
-                    "JOIN DIM_DATE d ON inv.date_key=d.date_key "
-                    "JOIN DIM_INGREDIENT ing ON inv.ingredient_key=ing.ingredient_key "
-                    "JOIN DIM_ALERT_LEVEL al ON inv.alert_key=al.alert_key "
-                    f"{iw_sql} ORDER BY d.date DESC"
-                )
-                try:
-                    total_i = conn.execute(f"SELECT COUNT(*) FROM ({iq})").fetchone()[0]
-                    n_i = st.slider("Records to show", 10, 500, 50, 10, key='i_rows')
-                    df_i = pd.read_sql(f"{iq} LIMIT {n_i}", conn)
-                    st.caption(f"Showing {len(df_i):,} of {total_i:,} records")
-
-                    edited_i = st.data_editor(
-                        df_i, use_container_width=True, hide_index=True,
-                        key='i_editor', num_rows="dynamic",
-                        disabled=["Purchase Date","Expiry Date","Ingredient","Unit","Alert Level","Action"]
-                    )
-
-                    ic1, ic2, ic3 = st.columns([1, 1, 2])
-                    with ic1:
-                        if st.button("Save Changes", type="primary", key='i_save'):
-                            try:
-                                for _, row in edited_i.iterrows():
-                                    # Days-until-expiration is no longer shown as an
-                                    # editable column, so recompute it from Expiry
-                                    # Date (still clean, e.g. '2026-06-08') instead
-                                    # of trusting a value the user can't see/edit.
-                                    try:
-                                        _days_left = (pd.to_datetime(row.get('Expiry Date')) - pd.Timestamp.now().normalize()).days
-                                    except Exception:
-                                        _days_left = None
-                                    conn.execute(
-                                        "UPDATE FACT_INVENTORY SET "
-                                        "quantity=?, cost_per_unit=?, total_cost=?, days_until_expiration=? "
-                                        "WHERE inventory_key IN ("
-                                        "SELECT inv.inventory_key FROM FACT_INVENTORY inv "
-                                        "JOIN DIM_DATE d ON inv.date_key=d.date_key "
-                                        "JOIN DIM_INGREDIENT ing ON inv.ingredient_key=ing.ingredient_key "
-                                        "WHERE d.date=? AND ing.ingredient_name=?)",
-                                        (row.get('Quantity'), row.get('Cost per Unit'),
-                                         row.get('Total Cost'), _days_left,
-                                         row.get('Purchase Date'), row.get('Ingredient'))
-                                    )
-                                conn.commit()
-                                log_audit('EDIT', 'Inventory', len(edited_i), 'Saved edits to inventory records in the table view')
-                                st.success("Changes saved successfully!")
-                            except Exception as e:
-                                st.error(f"Could not save: {e}")
-                    with ic2:
-                        # Delete by current filter — same freeze-before-confirm
-                        # safety pattern as the Waste tab (see comment there).
-                        if iw_sql:
-                            inv_del_label = f"Delete filtered ({total_i:,} records)"
-                        else:
-                            inv_del_label = "Delete All Records"
-
-                        if st.button(inv_del_label, key='i_del_filter'):
-                            st.session_state['i_confirm_del']      = True
-                            st.session_state['i_del_sql_frozen']   = iw_sql
-                            st.session_state['i_del_count_frozen'] = total_i
-
-                        if st.session_state.get('i_confirm_del', False):
-                            frozen_sql_i   = st.session_state.get('i_del_sql_frozen', iw_sql)
-                            frozen_count_i = st.session_state.get('i_del_count_frozen', total_i)
-
-                            if not frozen_sql_i:
-                                st.error(
-                                    "⚠️ No filter is applied — this would delete "
-                                    f"ALL {frozen_count_i:,} inventory records. Type "
-                                    "DELETE ALL below to confirm, or Cancel."
-                                )
-                                confirm_text_i = st.text_input(
-                                    "Type DELETE ALL to confirm", key='i_del_all_text'
-                                )
-                                proceed_allowed_i = (confirm_text_i.strip() == "DELETE ALL")
-                            else:
-                                st.warning(
-                                    f"This will permanently delete **{frozen_count_i:,} records** "
-                                    f"matching the filter you selected. This cannot be undone."
-                                )
-                                proceed_allowed_i = True
-
-                            icd1, icd2 = st.columns(2)
-                            with icd1:
-                                if st.button("Delete", type="primary", key='i_del_confirm',
-                                             use_container_width=True, disabled=not proceed_allowed_i):
-                                    try:
-                                        conn.execute(
-                                            "DELETE FROM FACT_INVENTORY WHERE inventory_key IN ("
-                                            "SELECT inv.inventory_key FROM FACT_INVENTORY inv "
-                                            "JOIN DIM_DATE d ON inv.date_key=d.date_key "
-                                            "JOIN DIM_INGREDIENT ing ON inv.ingredient_key=ing.ingredient_key "
-                                            "JOIN DIM_ALERT_LEVEL al ON inv.alert_key=al.alert_key "
-                                            f"{frozen_sql_i})"
-                                        )
-                                        conn.commit()
-                                        log_audit('DELETE', 'Inventory', frozen_count_i, 'Bulk delete by filter: ' + (frozen_sql_i or 'NO FILTER (all records)'))
-                                        st.session_state['i_confirm_del'] = False
-                                        st.success(f"Deleted {frozen_count_i:,} records successfully!")
-                                        st.cache_data.clear()
-                                        st.rerun()
-                                    except Exception as e:
-                                        st.error(f"Could not delete: {e}")
-                            with icd2:
-                                if st.button("Cancel", key='i_del_cancel', use_container_width=True):
-                                    st.session_state['i_confirm_del'] = False
-                                    st.rerun()
-
-                    with ic3:
-                        st.download_button(
-                            "Download Inventory as CSV",
-                            data=df_i.to_csv(index=False).encode("utf-8"),
-                            file_name="inventory_records.csv", mime="text/csv", key="dl_i"
-                        )
-
-                    # ── Delete individual selected rows ────────────────────
-                    st.markdown("---")
-                    st.markdown("**Delete Individual Records**")
-                    st.caption("Select rows to delete by checking the box on the left.")
-
-                    df_i_select = df_i.copy()
-                    df_i_select.insert(0, 'Select', False)
-                    edited_i_sel = st.data_editor(
-                        df_i_select,
-                        use_container_width=True,
-                        hide_index=True,
-                        key='i_sel_editor',
-                        column_config={
-                            'Select': st.column_config.CheckboxColumn('Select', default=False)
-                        },
-                        disabled=[c for c in df_i_select.columns if c != 'Select']
-                    )
-                    sel_inv_rows = edited_i_sel[edited_i_sel['Select'] == True]
-                    if len(sel_inv_rows) > 0:
-                        st.caption(f"{len(sel_inv_rows)} row(s) selected")
-                        if st.button(f"Delete {len(sel_inv_rows)} Selected Row(s)", type="primary", key='i_del_rows'):
-                            try:
-                                for _, row in sel_inv_rows.iterrows():
-                                    conn.execute(
-                                        "DELETE FROM FACT_INVENTORY WHERE inventory_key IN ("
-                                        "SELECT inv.inventory_key FROM FACT_INVENTORY inv "
-                                        "JOIN DIM_DATE d ON inv.date_key=d.date_key "
-                                        "JOIN DIM_INGREDIENT ing ON inv.ingredient_key=ing.ingredient_key "
-                                        "WHERE d.date=? AND ing.ingredient_name=?)",
-                                        (row.get('Purchase Date'), row.get('Ingredient'))
-                                    )
-                                conn.commit()
-                                log_audit('DELETE', 'Inventory', len(sel_inv_rows), 'Selected rows: ' + rows_summary(sel_inv_rows, ['Purchase Date','Ingredient']))
-                                st.success(f"Deleted {len(sel_inv_rows)} record(s)!")
-                                st.cache_data.clear()
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Could not delete: {e}")
-                except Exception as e:
-                    st.error(f"Could not load inventory: {e}")
-
-            # ─────────────────────────────────────────────────────────────
-            # TAB 4: MENU ITEMS (editable — now that Menu has an upload feature)
-            # ─────────────────────────────────────────────────────────────
+                render_records_tab(conn, INV_CFG)
             with tab4:
-                st.caption("List of all menu items and their pricing information. You can correct or remove entries here.")
-                try:
-                    df_menu = pd.read_sql(
-                        "SELECT item_name AS [Item], category AS [Category], "
-                        "price AS [Price], cost AS [Cost], "
-                        "profit_margin AS [Profit Margin] "
-                        "FROM DIM_ITEM ORDER BY category, item_name",
-                        conn
-                    )
-                    st.caption(f"{len(df_menu):,} menu items")
-
-                    edited_menu = st.data_editor(
-                        df_menu, use_container_width=True, hide_index=True,
-                        key='menu_editor', num_rows="dynamic",
-                        disabled=["Item", "Category", "Profit Margin"]
-                    )
-
-                    mc1, mc2, mc3 = st.columns([1, 1, 2])
-                    with mc1:
-                        if st.button("Save Changes", type="primary", key='menu_save'):
-                            try:
-                                for _, row in edited_menu.iterrows():
-                                    price = row.get('Price')
-                                    cost  = row.get('Cost')
-                                    margin = (price - cost) if (pd.notna(price) and pd.notna(cost)) else None
-                                    conn.execute(
-                                        "UPDATE DIM_ITEM SET price=?, cost=?, profit_margin=? WHERE item_name=?",
-                                        (price, cost, margin, row.get('Item'))
-                                    )
-                                conn.commit()
-                                log_audit('EDIT', 'Menu', len(edited_menu), 'Saved price/cost edits to menu items')
-                                st.success("Changes saved successfully!")
-                                st.cache_data.clear()
-                            except Exception as e:
-                                st.error(f"Could not save: {e}")
-                    with mc2:
-                        # Same freeze-before-confirm safety pattern as Sales/Waste/Inventory
-                        if st.button("Delete All Records", key='menu_del_all'):
-                            st.session_state['menu_confirm_del']      = True
-                            st.session_state['menu_del_count_frozen'] = len(df_menu)
-
-                        if st.session_state.get('menu_confirm_del', False):
-                            frozen_count_menu = st.session_state.get('menu_del_count_frozen', len(df_menu))
-                            st.error(
-                                "⚠️ This would delete ALL "
-                                f"{frozen_count_menu:,} menu items. Type "
-                                "DELETE ALL below to confirm, or Cancel."
-                            )
-                            confirm_text_menu = st.text_input(
-                                "Type DELETE ALL to confirm", key='menu_del_all_text'
-                            )
-                            proceed_allowed_menu = (confirm_text_menu.strip() == "DELETE ALL")
-
-                            mcd1, mcd2 = st.columns(2)
-                            with mcd1:
-                                if st.button("Delete", type="primary", key='menu_del_confirm',
-                                             use_container_width=True, disabled=not proceed_allowed_menu):
-                                    try:
-                                        conn.execute("DELETE FROM DIM_ITEM")
-                                        conn.commit()
-                                        log_audit('DELETE', 'Menu', frozen_count_menu, 'Deleted ALL menu items')
-                                        st.session_state['menu_confirm_del'] = False
-                                        st.success(f"Deleted {frozen_count_menu:,} menu items successfully!")
-                                        st.cache_data.clear()
-                                        st.rerun()
-                                    except Exception as e:
-                                        st.error(f"Could not delete: {e}")
-                            with mcd2:
-                                if st.button("Cancel", key='menu_del_cancel', use_container_width=True):
-                                    st.session_state['menu_confirm_del'] = False
-                                    st.rerun()
-                    with mc3:
-                        st.download_button(
-                            "Download Menu Items as CSV",
-                            data=df_menu.to_csv(index=False).encode("utf-8"),
-                            file_name="menu_items.csv", mime="text/csv", key="dl_menu"
-                        )
-
-                    # ── Delete individual selected rows ────────────────────
-                    st.markdown("---")
-                    st.markdown("**Delete Individual Records**")
-                    st.caption(
-                        "Select rows to delete by checking the box on the left. "
-                        "⚠️ Deleting an item also hides its past sales/waste records "
-                        "from the Sales and Waste Records tabs (they're linked by item name)."
-                    )
-
-                    df_menu_select = df_menu.copy()
-                    df_menu_select.insert(0, 'Select', False)
-                    edited_menu_sel = st.data_editor(
-                        df_menu_select,
-                        use_container_width=True,
-                        hide_index=True,
-                        key='menu_sel_editor',
-                        column_config={
-                            'Select': st.column_config.CheckboxColumn('Select', default=False)
-                        },
-                        disabled=[c for c in df_menu_select.columns if c != 'Select']
-                    )
-                    selected_menu_rows = edited_menu_sel[edited_menu_sel['Select'] == True]
-                    if len(selected_menu_rows) > 0:
-                        st.caption(f"{len(selected_menu_rows)} item(s) selected")
-                        if st.button(f"Delete {len(selected_menu_rows)} Selected Item(s)", type="primary", key='menu_del_rows'):
-                            try:
-                                for _, row in selected_menu_rows.iterrows():
-                                    conn.execute("DELETE FROM DIM_ITEM WHERE item_name=?", (row.get('Item'),))
-                                conn.commit()
-                                log_audit('DELETE', 'Menu', len(selected_menu_rows), 'Selected items: ' + rows_summary(selected_menu_rows, ['Item']))
-                                st.success(f"Deleted {len(selected_menu_rows)} item(s)!")
-                                st.cache_data.clear()
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Could not delete: {e}")
-                except Exception as e:
-                    st.error(f"Could not load menu items: {e}")
+                st.caption("Archiving a menu item hides it from the menu list. Its past sales and waste records stay visible elsewhere.")
+                render_records_tab(conn, MENU_CFG)
 
         conn.close()
 
