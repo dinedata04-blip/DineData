@@ -3521,6 +3521,8 @@ elif page == 'Forecast & Predictions':
 
             # ── Prepare More / As Usual / Prepare Less ────────────────────
             st.markdown("#### Production Recommendations")
+            st.caption("Each item shows its busiest selling window for this weekday (from past sales by hour). "
+                       "Under Prepare More, the suggested prep time starts 1 hour before that window.")
 
          # Deduplicate and get top unique items per demand
             waste_input_norm, wi_item_disp, _ = add_normalized_keys(waste_input, item_col='item_name')
@@ -3560,13 +3562,94 @@ elif page == 'Forecast & Predictions':
             }
             cat_map = dict(zip(waste_input['item_name'], waste_input['category'])) if 'category' in waste_input.columns else {}
 
-            def render_items(items, color, key):
+            # ── Best time to prepare — per item, from sales-by-hour history ──
+            # For each item we find its busiest 2-hour window (same weekday as
+            # today over the last ~6 months, falling back to all days when that
+            # slice is thin), then suggest starting prep PREP_LEAD_HOURS before
+            # that window so stock is ready when the rush begins.
+            PREP_LEAD_HOURS = 1     # how early to start prep before the peak window
+            PEAK_WINDOW_HRS = 2     # length of the "peak" window shown
+            MIN_TXN_DOW     = 20    # min same-weekday transactions before trusting it
+
+            def _fmt_hour(h):
+                h = int(h) % 24
+                return f"{(h % 12) or 12}:00 {'AM' if h < 12 else 'PM'}"
+
+            def _build_item_peak_windows():
+                """Returns {normalized_item_key: (prep_by_hour, peak_start, peak_end)}."""
+                try:
+                    src = sales_df
+                    if src is None or len(src) == 0 or 'date' not in src.columns:
+                        return {}
+                    dts = pd.to_datetime(src['date'], errors='coerce')
+                    # The database stores the sale DATE only, so time-of-day is
+                    # lost there — fall back to the CSV, which keeps the time.
+                    if dts.dt.hour.nunique() <= 1:
+                        csv_src = load_csv(DATA_PATHS['sales'])
+                        if csv_src is None or 'date' not in csv_src.columns:
+                            return {}
+                        src = csv_src
+                        dts = pd.to_datetime(src['date'], errors='coerce')
+                        if dts.dt.hour.nunique() <= 1:
+                            return {}
+                    item_c = 'item' if 'item' in src.columns else ('item_name' if 'item_name' in src.columns else None)
+                    if item_c is None:
+                        return {}
+                    d = pd.DataFrame({
+                        'key':  src[item_c].astype(str).str.strip().str.lower().values,
+                        'dt':   dts.values,
+                        'qty':  pd.to_numeric(src['quantity'], errors='coerce').fillna(1).values
+                                if 'quantity' in src.columns else 1,
+                    }).dropna(subset=['dt'])
+                    d['dt'] = pd.to_datetime(d['dt'])
+                    d['hour'] = d['dt'].dt.hour
+                    d['dow']  = d['dt'].dt.dayofweek
+                    recent = d[d['dt'] >= d['dt'].max() - pd.Timedelta(days=180)]
+
+                    def _best_window(g):
+                        by_hr = g.groupby('hour')['qty'].sum()
+                        if by_hr.empty:
+                            return None
+                        by_hr = by_hr.reindex(range(24), fill_value=0)
+                        totals = {h: sum(by_hr.get((h + k), 0) for k in range(PEAK_WINDOW_HRS))
+                                  for h in range(24 - PEAK_WINDOW_HRS + 1)}
+                        start = max(totals, key=totals.get)
+                        if totals[start] <= 0:
+                            return None
+                        return (max(start - PREP_LEAD_HOURS, 0), start, start + PEAK_WINDOW_HRS)
+
+                    out = {}
+                    for key, g_all in d.groupby('key'):
+                        g_dow = recent[(recent['key'] == key) & (recent['dow'] == today_dow)]
+                        win = _best_window(g_dow) if len(g_dow) >= MIN_TXN_DOW else None
+                        out[key] = win or _best_window(g_all)
+                    return out
+                except Exception:
+                    return {}
+
+            item_peak = _build_item_peak_windows()
+
+            def _time_note(item, is_prepare_more):
+                win = item_peak.get(str(item).strip().lower())
+                if not win:
+                    return ""
+                prep_by, p_start, p_end = win
+                peak_txt = f"{_fmt_hour(p_start)} – {_fmt_hour(p_end)}"
+                if is_prepare_more:
+                    return (f"<div style='font-size:12px;color:#2E7D32;font-weight:600;margin-top:3px'>"
+                            f"Prepare by {_fmt_hour(prep_by)}"
+                            f"<span style='color:#8A7968;font-weight:400'> · peak {peak_txt}</span></div>")
+                return (f"<div style='font-size:12px;color:#8A7968;margin-top:3px'>"
+                        f"Peak {peak_txt}</div>")
+
+            def render_items(items, color, key, show_prep_time=False):
                 expanded = st.session_state.get(key, False)
                 visible  = items if expanded else items[:PREVIEW]
                 for item in visible:
                     st.markdown(
                         f"<div style='padding:7px 12px;border-left:3px solid {color};"
-                        f"margin-bottom:4px;font-size:13.5px;color:#3E2723'>{item}</div>",
+                        f"margin-bottom:4px;font-size:13.5px;color:#3E2723'>{item}"
+                        f"{_time_note(item, show_prep_time)}</div>",
                         unsafe_allow_html=True
                     )
                 if len(items) > PREVIEW:
@@ -3583,7 +3666,7 @@ elif page == 'Forecast & Predictions':
                     "font-size:13px;margin-bottom:10px'>PREPARE MORE</div>",
                     unsafe_allow_html=True
                 )
-                render_items(prepare_more, '#2E7D32', 'pg_more_exp')
+                render_items(prepare_more, '#2E7D32', 'pg_more_exp', show_prep_time=True)
 
             with col2:
                 st.markdown(
@@ -3636,7 +3719,7 @@ elif page == 'Forecast & Predictions':
                 f"<b style='color:#6F4E37'>{len(prepare_normal)} item(s) to Prepare As Usual</b>, and "
                 f"<b style='color:#C62828'>{len(prepare_less)} item(s) to Prepare Less</b>. "
                 f"Items under Prepare More have historically high demand on {today_day_name}s — "
-                f"increase your batch size. Items under Prepare Less tend to have lower demand — "
+                f"increase your batch size and have it ready by the prep time shown. Items under Prepare Less tend to have lower demand — "
                 "prepare in smaller batches to avoid waste."
             )
 
