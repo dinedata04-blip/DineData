@@ -1,6 +1,6 @@
 """
 ================================================================================
-DINEDATA — KÔFĒTALA BISTRO WASTE REDUCTION SYSTEM
+DINEDATA — A SMART COFFEE SHOP ANALYTICS AND WASTE MANAGEMENT REDUCTION SYSTEM FOR KÔFĒTALA BISTRO
 File: dashboard_kofetala.py
 Purpose: Streamlit dashboard with all revisions:
          1. Earth tones color scheme (coffee shop vibe)
@@ -38,7 +38,7 @@ warnings.filterwarnings('ignore')
 # ============================================================================
 
 st.set_page_config(
-    page_title="Kôfētala — DineData",
+    page_title="DineData — Smart Coffee Shop System",
     page_icon="",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -398,6 +398,23 @@ section[data-testid="stSidebar"] .sidebar-footer {
     margin-top: 22px; padding: 14px 6px 4px 6px; border-top: 1px solid rgba(62,39,35,0.08);
     font-size: 11.5px; color: #9C8B7A !important; line-height: 1.5;
 }
+
+/* ===== Brown accent instead of Streamlit's default red ===== */
+[data-baseweb="tab-list"] button[aria-selected="true"],
+[data-baseweb="tab-list"] button[aria-selected="true"] p { color: #6F4E37 !important; font-weight: 700; }
+[data-baseweb="tab-list"] button:hover,
+[data-baseweb="tab-list"] button:hover p { color: #6F4E37 !important; }
+[data-baseweb="tab-highlight"] { background-color: #6F4E37 !important; }
+[data-testid="stFormSubmitButton"] button,
+button[data-testid="stBaseButton-primaryFormSubmit"],
+button[data-testid="stBaseButton-secondaryFormSubmit"] {
+    background-color: #3E2723 !important; color: #FFFFFF !important; border: none !important;
+    border-radius: 10px !important; font-weight: 600 !important;
+}
+[data-testid="stFormSubmitButton"] button:hover { background-color: #6F4E37 !important; }
+[data-baseweb="tag"] { background-color: #6F4E37 !important; }
+[data-baseweb="tag"] span, [data-baseweb="tag"] svg { color: #FFFFFF !important; fill: #FFFFFF !important; }
+a { color: #6F4E37; }
 </style>
 ''', unsafe_allow_html=True)
 
@@ -611,59 +628,105 @@ QUARTER_MONTHS = {
 ALL_MONTHS = ['January','February','March','April','May','June',
               'July','August','September','October','November','December']
 
-def render_year_quarter_month_filter(df, key_prefix, date_col='date'):
-    """Renders one Year / Quarter / Month filter row (plus a 'Custom Date'
-    mode that swaps it for an exact date-range picker) and returns the
-    filtered dataframe. The Month dropdown is CASCADED off the selected
-    Quarter — picking Q1 narrows the Month options down to just January,
-    February, March, instead of showing all 12 months (which let someone
-    pick a month outside the quarter they just chose, silently overriding
-    it). Used by every chart on the dashboard that filters by Year/Quarter/
-    Month, so the cascading behavior — and the Custom Date option — is
-    consistent everywhere."""
+PERIOD_MODES  = ['Yearly', 'Monthly', 'Weekly', 'Custom Date']
+PATTERN_MODES = ['Yearly', 'Monthly', 'Custom Date']   # a single week is too little data to show a pattern
+TREND_MODES   = ['Weekly', 'Monthly', 'Yearly', 'Custom Date']
+
+def render_year_quarter_month_filter(df, key_prefix, date_col='date', modes=None):
+    """Period filter used by KPI cards, rankings, and pattern charts. The
+    user picks HOW to view (Yearly / Monthly / Weekly / Custom Date) and is
+    then shown only the pickers that choice needs:
+      Yearly       -> Year (or All years)
+      Monthly      -> Year + Month (only months that have data)
+      Weekly       -> any date; the Monday-Sunday week around it is used
+      Custom Date  -> an exact date range
+    Returns the filtered dataframe."""
+    modes = list(modes) if modes else PERIOD_MODES
     df_f = df.copy()
-    if date_col not in df_f.columns:
+    if date_col not in df_f.columns or len(df_f) == 0:
         return df_f
-    c0, c1, c2, c3 = st.columns([1, 1, 1, 1])
+    dts = df_f[date_col].dropna()
+    if dts.empty:
+        return df_f
+    min_d, max_d = dts.min().date(), dts.max().date()
+    c0, c1, c2 = st.columns(3)
     with c0:
-        filter_mode = st.selectbox(
-            "Time Filter", ['Year/Quarter/Month', 'Custom Date'], key=f'{key_prefix}_mode'
-        )
-    if filter_mode == 'Custom Date':
+        mode = st.selectbox("View by", modes, key=f'{key_prefix}_pmode')
+
+    if mode == 'Custom Date':
         with c1:
-            if len(df_f) > 0:
-                min_d = df_f[date_col].min().date()
-                max_d = df_f[date_col].max().date()
-                date_range = st.date_input(
-                    "Date Range", value=(min_d, max_d), min_value=min_d, max_value=max_d,
-                    key=f'{key_prefix}_customrange'
-                )
-            else:
-                date_range = None
-        with c2:
-            st.empty()
-        with c3:
-            st.empty()
-        if date_range is not None and isinstance(date_range, tuple) and len(date_range) == 2:
-            df_f = df_f[(df_f[date_col].dt.date >= date_range[0]) & (df_f[date_col].dt.date <= date_range[1])]
+            rng = st.date_input("Date Range", value=(min_d, max_d), min_value=min_d,
+                                max_value=max_d, key=f'{key_prefix}_prange')
+        if isinstance(rng, (tuple, list)):
+            if len(rng) == 2:   start, end = rng
+            elif len(rng) == 1: start = end = rng[0]
+            else:               return df_f
+        else:
+            start = end = rng
+        return df_f[(df_f[date_col].dt.date >= start) & (df_f[date_col].dt.date <= end)]
+
+    years = sorted(dts.dt.year.unique().tolist(), reverse=True)
+    if mode == 'Yearly':
+        with c1:
+            yr = st.selectbox("Year", ['All years'] + [str(y) for y in years], key=f'{key_prefix}_pyear')
+        if yr != 'All years':
+            df_f = df_f[df_f[date_col].dt.year == int(yr)]
         return df_f
 
-    yrs = sorted(df_f[date_col].dt.year.dropna().unique().tolist(), reverse=True)
+    if mode == 'Monthly':
+        with c1:
+            yr = st.selectbox("Year", [str(y) for y in years], key=f'{key_prefix}_pyear_m')
+        yr_df = df_f[df_f[date_col].dt.year == int(yr)]
+        have = set(yr_df[date_col].dt.month_name())
+        present = [m for m in ALL_MONTHS if m in have]
+        with c2:
+            mon = st.selectbox("Month", present, index=len(present) - 1,
+                               key=f'{key_prefix}_pmonth_{yr}')
+        return yr_df[yr_df[date_col].dt.month_name() == mon]
+
+    # Weekly
     with c1:
-        yr = st.selectbox("Year", ['All'] + [str(y) for y in yrs], key=f'{key_prefix}_year')
+        picked = st.date_input("Any date in the week", value=max_d, min_value=min_d,
+                               max_value=max_d, key=f'{key_prefix}_pweek')
+    if isinstance(picked, (tuple, list)):
+        picked = picked[0] if picked else max_d
+    w_start = picked - timedelta(days=picked.weekday())
+    w_end   = w_start + timedelta(days=6)
     with c2:
-        qtr = st.selectbox("Quarter", ['All','Q1','Q2','Q3','Q4'], key=f'{key_prefix}_qtr')
-    with c3:
-        month_opts = ['All'] + (QUARTER_MONTHS[qtr] if qtr != 'All' else ALL_MONTHS)
-        mon = st.selectbox("Month", month_opts, key=f'{key_prefix}_month')
-    if yr != 'All':
-        df_f = df_f[df_f[date_col].dt.year == int(yr)]
-    if qtr != 'All':
-        qm = {'Q1':[1,2,3],'Q2':[4,5,6],'Q3':[7,8,9],'Q4':[10,11,12]}
-        df_f = df_f[df_f[date_col].dt.month.isin(qm[qtr])]
-    if mon != 'All':
-        df_f = df_f[df_f[date_col].dt.month_name() == mon]
-    return df_f
+        st.caption(f"Showing {w_start.strftime('%b %d')} to {w_end.strftime('%b %d, %Y')}")
+    return df_f[(df_f[date_col].dt.date >= w_start) & (df_f[date_col].dt.date <= w_end)]
+
+def render_trend_filter(df, key_prefix, date_col='date', default='Monthly'):
+    """Filter row for TREND charts: one 'View by' choice that also sets the
+    chart's time bucket. Returns (filtered_df, granularity) where
+    granularity is 'Weekly' / 'Monthly' / 'Yearly' / 'Daily' (Custom Date
+    plots one point per day inside the chosen range). Weekly/Monthly ask for
+    a Year (or All years); Yearly needs nothing more; Custom Date asks for a
+    date range — so only the pickers that matter are shown."""
+    df_f = df.copy()
+    if date_col not in df_f.columns or len(df_f) == 0 or df_f[date_col].dropna().empty:
+        return df_f, 'Monthly'
+    dts = df_f[date_col].dropna()
+    c1, c2 = st.columns([1, 2])
+    with c1:
+        view = st.selectbox("View by", TREND_MODES, index=TREND_MODES.index(default),
+                            key=f'{key_prefix}_view')
+    with c2:
+        if view == 'Custom Date':
+            min_d, max_d = dts.min().date(), dts.max().date()
+            rng = st.date_input("Date Range", value=(min_d, max_d), min_value=min_d,
+                                max_value=max_d, key=f'{key_prefix}_trange')
+            if isinstance(rng, (tuple, list)) and len(rng) == 2:
+                df_f = df_f[(df_f[date_col].dt.date >= rng[0]) & (df_f[date_col].dt.date <= rng[1])]
+            return df_f, 'Daily'
+        if view == 'Yearly':
+            st.caption("Showing every year on record.")
+            return df_f, 'Yearly'
+        years = sorted(dts.dt.year.unique().tolist(), reverse=True)
+        yr = st.selectbox("Year", ['All years'] + [str(y) for y in years], key=f'{key_prefix}_tyear')
+        if yr != 'All years':
+            df_f = df_f[df_f[date_col].dt.year == int(yr)]
+    return df_f, view
 
 def render_daily_weekly_yearly_filter(df, key_prefix, date_col='date', show_granularity=True):
     """Renders a Daily / Weekly / Yearly 'View by' selector (optional) plus
@@ -1230,7 +1293,7 @@ if not st.session_state.get('auth_user'):
                 </svg>
             </div>
             <div class="login-title">DineData</div>
-            <div class="login-sub">A smart waste reduction system for K&ocirc;f&emacr;tala Bistro.</div>
+            <div class="login-sub">A Smart Coffee Shop Analytics and Waste Management Reduction System for K&ocirc;f&emacr;tala Bistro.</div>
             <div class="login-point"><span class="login-dot"></span>Know what to prepare, and when</div>
             <div class="login-point"><span class="login-dot"></span>Catch ingredients before they expire</div>
             <div class="login-point"><span class="login-dot"></span>See what is wasted, and why</div>
@@ -1264,7 +1327,7 @@ if not st.session_state.get('auth_user'):
                     log_audit('LOGIN_FAILED', detail=f"Failed sign-in for username '{_u.strip()[:40]}'",
                               user=_u.strip()[:40] or 'unknown', role='n/a')
                     st.error("Incorrect username or password.")
-        st.markdown("<div class='login-note'>DineData &middot; Waste Reduction System</div>",
+        st.markdown("<div class='login-note'>DineData &middot; Smart Coffee Shop Analytics and Waste Management Reduction System</div>",
                     unsafe_allow_html=True)
     st.stop()
 
@@ -1395,7 +1458,7 @@ with st.sidebar:
         st.rerun()
 
     st.markdown(
-        "<div class='sidebar-footer'>DineData &middot; Waste Reduction System<br>"
+        "<div class='sidebar-footer'><b>DineData</b><br>Smart Coffee Shop Analytics and Waste Management Reduction System<br>"
         "K&ocirc;f&emacr;tala Bistro</div>", unsafe_allow_html=True)
 
 # ── Stop if no sales data ─────────────────────────────────────────────────
@@ -1547,15 +1610,25 @@ if page == 'Dashboard Overview':
             # Waste, Inventory, and Menu snapshots below — this chart was
             # missing it before, so it always showed all-time data
             # regardless of period, unlike every other snapshot on this page.
-            sm_f = render_year_quarter_month_filter(overview_sales, 'ov_sales', date_col='date')
+            sm_f, sm_gran = render_trend_filter(overview_sales, 'ov_sales', date_col='date')
             if len(sm_f) == 0:
                 st.info("No sales records for this selection.")
             else:
                 sm = sm_f.copy()
-                sm['month'] = sm['date'].dt.to_period('M').dt.to_timestamp()
+                if sm_gran == 'Daily':
+                    sm['month'] = sm['date'].dt.normalize()
+                elif sm_gran == 'Weekly':
+                    sm['month'] = sm['date'].dt.to_period('W').dt.start_time
+                elif sm_gran == 'Yearly':
+                    sm['month'] = sm['date'].dt.to_period('Y').dt.to_timestamp()
+                else:
+                    sm['month'] = sm['date'].dt.to_period('M').dt.to_timestamp()
+                _sm_lbl = {'Daily': 'Day', 'Weekly': 'Week', 'Monthly': 'Month', 'Yearly': 'Year'}[sm_gran]
+                _sm_fmt = {'Daily': '%b %d, %Y', 'Weekly': '%b %d, %Y', 'Monthly': '%B %Y', 'Yearly': '%Y'}[sm_gran]
                 sm_rev = sm.groupby('month')['total'].sum().reset_index()
                 sm_rev.columns = ['Month', 'Revenue']
                 fig = px.area(sm_rev, x='Month', y='Revenue', color_discrete_sequence=[EARTH['primary']])
+                fig.update_xaxes(title_text=_sm_lbl)
                 fig.update_layout(
                     plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
                     yaxis=dict(tickprefix='₱', tickformat=',.0f'),
@@ -1565,16 +1638,16 @@ if page == 'Dashboard Overview':
                 if len(sm_rev) >= 2:
                     sales_dir = "growing" if sm_rev['Revenue'].iloc[-1] > sm_rev['Revenue'].iloc[0] else "declining"
                     chart_insight(
-                        f"Monthly revenue is <b>{sales_dir}</b>. Latest month "
-                        f"({sm_rev.iloc[-1]['Month'].strftime('%B %Y')}) recorded "
+                        f"Revenue is <b>{sales_dir}</b> over this view. Latest {_sm_lbl.lower()} "
+                        f"({sm_rev.iloc[-1]['Month'].strftime(_sm_fmt)}) recorded "
                         f"<b>₱{sm_rev.iloc[-1]['Revenue']:,.2f}</b> in revenue. "
                         f"See <b>Sales &amp; Menu</b> for the full breakdown.",
                         'good' if sales_dir == 'growing' else 'warn'
                     )
                 elif len(sm_rev) == 1:
                     chart_insight(
-                        f"Only one month of data in this selection: "
-                        f"<b>{sm_rev.iloc[0]['Month'].strftime('%B %Y')}</b> recorded "
+                        f"Only one {_sm_lbl.lower()} of data in this selection: "
+                        f"<b>{sm_rev.iloc[0]['Month'].strftime(_sm_fmt)}</b> recorded "
                         f"<b>₱{sm_rev.iloc[0]['Revenue']:,.2f}</b> in revenue. "
                         f"See <b>Sales &amp; Menu</b> for the full breakdown."
                     )
@@ -1699,7 +1772,8 @@ if page == 'Dashboard Overview':
         if len(overview_inv) > 0 and 'purchase_date' in overview_inv.columns:
             inv_ov = overview_inv.copy()
             inv_ov['purchase_date'] = pd.to_datetime(inv_ov['purchase_date'], errors='coerce')
-            inv_ov_f = render_year_quarter_month_filter(inv_ov, 'ov_inv', date_col='purchase_date')
+            inv_ov_f = render_year_quarter_month_filter(inv_ov, 'ov_inv', date_col='purchase_date',
+                                                        modes=['Monthly', 'Weekly', 'Custom Date'])
 
             if 'alert_level' not in inv_ov_f.columns:
                 if 'spoilage_risk' in inv_ov_f.columns:
@@ -1759,12 +1833,12 @@ elif page == 'Sales & Menu':
     with _t0:
         st.caption("To add new sales records, go to the **Import Data** page — all data uploads now happen there.")
 
-        def _sa_apply_filters(base_df, key_prefix):
+        def _sa_apply_filters(base_df, key_prefix, modes=None):
             """Renders its own Year/Quarter/Month filter row (Month options
             cascade off the chosen Quarter) and returns the filtered
             dataframe — kept local to each chart so no two visualizations on
             this page share the same filter controls."""
-            return render_year_quarter_month_filter(base_df, key_prefix, date_col='date')
+            return render_year_quarter_month_filter(base_df, key_prefix, date_col='date', modes=modes)
 
         # ── Business Summary — boxed and filterable, uniform with the Waste
         # Summary box on Waste Analytics and the Performance Distribution box
@@ -1801,7 +1875,7 @@ elif page == 'Sales & Menu':
         with st.container(border=True):
             st.markdown("#### Performance by Day of Week")
             dow_metric = st.selectbox("Metric", ['Revenue', 'Transactions'], key='sa_dow_metric')
-            dow_src = _sa_apply_filters(sales_df, 'sa_dow')
+            dow_src = _sa_apply_filters(sales_df, 'sa_dow', modes=PATTERN_MODES)
             if 'date' in dow_src.columns and len(dow_src) > 0:
                 day_order = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']
                 fc = dow_src.copy()
@@ -1874,7 +1948,7 @@ elif page == 'Sales & Menu':
                     st.info("Time of day isn't available in the stored sales records yet, "
                             "so busiest hours can't be shown.")
                 else:
-                    busy_src = _sa_apply_filters(_busy_base, 'sa_busy')
+                    busy_src = _sa_apply_filters(_busy_base, 'sa_busy', modes=PATTERN_MODES)
                     if len(busy_src) == 0:
                         st.info("No sales records for this filter combination.")
                     else:
@@ -1946,37 +2020,14 @@ elif page == 'Sales & Menu':
         # noisy on its own. ──────────────────────────────────────────────────
         with st.container(border=True):
             st.markdown("#### Sales Trend")
-            trend_src = _sa_apply_filters(sales_df, 'sa_trend')
+            metric_choice = st.selectbox(
+                "Metric to plot", ['Revenue', 'Transactions', 'Units Sold'],
+                key='monthly_trend_metric'
+            )
+            trend_src, granularity = render_trend_filter(sales_df, 'sa_trend')
             if 'date' in trend_src.columns and len(trend_src) > 0:
-                tcol1, tcol2, tcol3 = st.columns(3)
-                with tcol1:
-                    metric_choice = st.selectbox(
-                        "Metric to plot", ['Revenue', 'Transactions', 'Units Sold'],
-                        key='monthly_trend_metric'
-                    )
-                with tcol2:
-                    granularity = st.selectbox(
-                        "View by", ['Daily', 'Weekly', 'Monthly', 'Yearly', 'Custom Date'],
-                        index=2, key='trend_granularity'
-                    )
-                with tcol3:
-                    if granularity == 'Custom Date':
-                        sa_trend_custom_range = st.date_input(
-                            "Date Range",
-                            value=(trend_src['date'].min().date(), trend_src['date'].max().date()),
-                            min_value=trend_src['date'].min().date(), max_value=trend_src['date'].max().date(),
-                            key='sa_trend_customrange'
-                        )
-                    else:
-                        st.empty()
-
                 fc2 = trend_src.copy()
-                if granularity == 'Custom Date':
-                    if isinstance(sa_trend_custom_range, tuple) and len(sa_trend_custom_range) == 2:
-                        fc2 = fc2[(fc2['date'].dt.date >= sa_trend_custom_range[0]) & (fc2['date'].dt.date <= sa_trend_custom_range[1])]
-                    fc2['period'] = fc2['date'].dt.date
-                    x_title, ma_window = 'Date', 7
-                elif granularity == 'Daily':
+                if granularity == 'Daily':
                     fc2['period'] = fc2['date'].dt.date
                     x_title, ma_window = 'Date', 7
                 elif granularity == 'Weekly':
@@ -2119,12 +2170,12 @@ elif page == 'Sales & Menu':
         item_col = 'item' if 'item' in src.columns else \
                    'item_name' if 'item_name' in src.columns else None
 
-        def _mp_apply_filters(base_df, key_prefix):
+        def _mp_apply_filters(base_df, key_prefix, modes=None):
             """Renders its own Year/Quarter/Month (Month cascades off Quarter)
             + Category filter row and returns the filtered dataframe — kept
             local to each chart so no two visualizations on this page share
             the same filter controls."""
-            df_f = render_year_quarter_month_filter(base_df, key_prefix, date_col='date') \
+            df_f = render_year_quarter_month_filter(base_df, key_prefix, date_col='date', modes=modes) \
                 if 'date' in base_df.columns else base_df.copy()
             if 'category' in df_f.columns:
                 cats = sorted(df_f['category'].dropna().unique().tolist())
@@ -2196,7 +2247,7 @@ elif page == 'Sales & Menu':
         with st.container(border=True):
             st.markdown("#### Performance Distribution")
             st.caption("Which items to Keep, Improve, or Reconsider, filtered by period and category.")
-            src_dist = _mp_apply_filters(src, 'mp_dist')
+            src_dist = _mp_apply_filters(src, 'mp_dist', modes=PATTERN_MODES)
             summary  = _mp_build_summary(src_dist)
 
         st.markdown("")
@@ -2481,14 +2532,14 @@ elif page == 'Waste & Inventory':
 
         if display_waste is not None and len(display_waste) > 0:
 
-            def _wa_apply_filters(base_df, key_prefix, show_reason=True):
+            def _wa_apply_filters(base_df, key_prefix, show_reason=True, modes=None):
                 """Renders the same Year/Quarter/Month (+ Custom Date) filter row
                 used by Transaction KPIs on Sales Analytics and Performance
                 Distribution on Menu Performance, plus a Category select and
                 (optionally) a Waste Reason select — kept local to each chart so
                 no two visualizations on this page share the same filter
                 controls."""
-                df_f = render_year_quarter_month_filter(base_df, key_prefix, date_col='date') \
+                df_f = render_year_quarter_month_filter(base_df, key_prefix, date_col='date', modes=modes) \
                     if 'date' in base_df.columns else base_df.copy()
                 if 'category' in df_f.columns:
                     cats = sorted(df_f['category'].dropna().unique().tolist())
@@ -2614,37 +2665,25 @@ elif page == 'Waste & Inventory':
             # Waste trend — its own filter (granularity + category + time period)
             with st.container(border=True):
                 st.markdown("#### Waste Cost Trend")
-                trend_waste = _wa_apply_filters(display_waste, 'wa_trend', show_reason=False)
+                _wt_df = display_waste
+                if 'category' in _wt_df.columns:
+                    _wt_cats = sorted(_wt_df['category'].dropna().unique().tolist())
+                    _wt_sel = st.selectbox("Category", ['All'] + _wt_cats, key='wa_trend_cat')
+                    if _wt_sel != 'All':
+                        _wt_df = _wt_df[_wt_df['category'] == _wt_sel]
+                trend_waste, trend_granularity = render_trend_filter(_wt_df, 'wa_trend')
                 if 'date' in trend_waste.columns and 'total_waste_cost' in trend_waste.columns and len(trend_waste) > 0:
-                    wtc1, wtc2 = st.columns([1, 2])
-                    with wtc1:
-                        trend_granularity = st.selectbox(
-                            "View by", ['Daily', 'Weekly', 'Monthly', 'Custom Date'], index=2, key='waste_trend_granularity'
-                        )
-                    with wtc2:
-                        if trend_granularity == 'Custom Date':
-                            wa_trend_custom_range = st.date_input(
-                                "Date Range",
-                                value=(trend_waste['date'].min().date(), trend_waste['date'].max().date()),
-                                min_value=trend_waste['date'].min().date(), max_value=trend_waste['date'].max().date(),
-                                key='wa_trend_customrange'
-                            )
-                        else:
-                            st.empty()
-
                     twaste = trend_waste.copy()
 
-                    if trend_granularity == 'Custom Date':
-                        if isinstance(wa_trend_custom_range, tuple) and len(wa_trend_custom_range) == 2:
-                            twaste = twaste[(twaste['date'].dt.date >= wa_trend_custom_range[0]) & (twaste['date'].dt.date <= wa_trend_custom_range[1])]
-                        twaste['period'] = twaste['date'].dt.date
-                        ma_window = 7
-                    elif trend_granularity == 'Daily':
+                    if trend_granularity == 'Daily':
                         twaste['period'] = twaste['date'].dt.date
                         ma_window = 7
                     elif trend_granularity == 'Weekly':
                         twaste['period'] = twaste['date'].dt.to_period('W').dt.start_time
                         ma_window = 4
+                    elif trend_granularity == 'Yearly':
+                        twaste['period'] = twaste['date'].dt.to_period('Y').dt.to_timestamp()
+                        ma_window = 1
                     else:
                         twaste['period'] = twaste['date'].dt.to_period('M').dt.to_timestamp()
                         ma_window = 3
@@ -2660,12 +2699,13 @@ elif page == 'Waste & Inventory':
                         mode='lines+markers',
                         line=dict(color=EARTH['light'], width=1.5)
                     ))
-                    fig.add_trace(go.Scatter(
-                        x=daily['date'], y=daily[f'{ma_window}-period avg'],
-                        name=f'{ma_window}-period Average',
-                        line=dict(color=EARTH['primary'], width=2.5),
-                        mode='lines'
-                    ))
+                    if ma_window > 1:
+                        fig.add_trace(go.Scatter(
+                            x=daily['date'], y=daily[f'{ma_window}-period avg'],
+                            name=f'{ma_window}-period Average',
+                            line=dict(color=EARTH['primary'], width=2.5),
+                            mode='lines'
+                        ))
                     fig.update_layout(
                         plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
                         yaxis=dict(tickprefix='₱', tickformat=',.0f'),
@@ -2674,19 +2714,20 @@ elif page == 'Waste & Inventory':
                     )
                     st.plotly_chart(fig, use_container_width=True)
 
+                    _WORD = {'Daily': 'day', 'Weekly': 'week', 'Monthly': 'month', 'Yearly': 'year'}
                     if len(daily) >= 2:
                         trend_dir_wa = "rising" if daily[f'{ma_window}-period avg'].iloc[-1] > daily[f'{ma_window}-period avg'].iloc[0] else "falling"
                         peak_row_wa = daily.loc[daily['waste_cost'].idxmax()]
                         low_row_wa  = daily.loc[daily['waste_cost'].idxmin()]
                         chart_insight(
                             f"The waste cost trend is <b>{trend_dir_wa}</b> over this range ({len(daily)} "
-                            f"{trend_granularity.lower()} periods). Latest {ma_window}-period average: "
+                            f"{_WORD[trend_granularity]} periods). Latest {ma_window}-period average: "
                             f"<b>₱{daily[f'{ma_window}-period avg'].iloc[-1]:,.2f}</b>. The highest single period was "
                             f"<b>₱{peak_row_wa['waste_cost']:,.2f}</b> "
                             f"({pd.to_datetime(peak_row_wa['date']).strftime('%Y-%m-%d')}), the lowest was "
                             f"<b>₱{low_row_wa['waste_cost']:,.2f}</b> "
                             f"({pd.to_datetime(low_row_wa['date']).strftime('%Y-%m-%d')}), and the overall "
-                            f"average was <b>₱{daily['waste_cost'].mean():,.2f}</b> per {trend_granularity.lower()[:-2]}.",
+                            f"average was <b>₱{daily['waste_cost'].mean():,.2f}</b> per {_WORD[trend_granularity]}.",
                             'warn' if trend_dir_wa == 'rising' else 'good'
                         )
                 else:
@@ -2697,7 +2738,7 @@ elif page == 'Waste & Inventory':
             # ── Waste by Day of Week — which day wastes the most — own filter ──
             with st.container(border=True):
                 st.markdown("#### Waste by Day of Week")
-                dow_waste_src = _wa_apply_filters(display_waste, 'wa_dow')
+                dow_waste_src = _wa_apply_filters(display_waste, 'wa_dow', modes=PATTERN_MODES)
                 if 'date' in dow_waste_src.columns and 'total_waste_cost' in dow_waste_src.columns and len(dow_waste_src) > 0:
                     day_order_w = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']
                     dw = dow_waste_src.copy()
