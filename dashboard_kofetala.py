@@ -329,6 +329,72 @@ h4 {{ color: {EARTH["dark"]}; font-weight: 600; }}
 </style>
 ''', unsafe_allow_html=True)
 
+st.markdown('''
+<style>
+/* ===== Light earth-tone sidebar ===== */
+section[data-testid="stSidebar"] { background: #FBF7F1 !important; border-right: 1px solid rgba(62,39,35,0.08) !important; }
+section[data-testid="stSidebar"] * { color: #4A3B32 !important; }
+
+section[data-testid="stSidebar"] .sidebar-brand {
+    display: flex; align-items: center; gap: 12px;
+    padding: 6px 4px 16px 4px; margin-bottom: 8px;
+    border-bottom: 1px solid rgba(62,39,35,0.08);
+}
+section[data-testid="stSidebar"] .sidebar-logo {
+    width: 42px; height: 42px; border-radius: 12px; flex: none;
+    display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(135deg, #3E2723 0%, #6F4E37 100%);
+    box-shadow: 0 4px 10px rgba(62,39,35,0.25);
+}
+section[data-testid="stSidebar"] .sidebar-brand-name { color: #3E2723 !important; font-size: 19px; font-weight: 800; line-height: 1.1; }
+section[data-testid="stSidebar"] .sidebar-brand-sub  { color: #8A7968 !important; font-size: 12.5px; font-weight: 500; margin-top: 2px; }
+section[data-testid="stSidebar"] .sidebar-section-label {
+    color: #8A7460 !important; font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.9px; margin: 20px 6px 6px 6px;
+    padding-top: 12px; border-top: 1px solid rgba(62,39,35,0.08);
+}
+
+/* Navigation buttons */
+section[data-testid="stSidebar"] .stButton>button {
+    background: transparent !important; color: #5A473B !important;
+    border: none !important; box-shadow: none !important;
+    border-radius: 12px !important; padding: 11px 14px !important;
+    font-weight: 500 !important; font-size: 14.5px !important;
+}
+section[data-testid="stSidebar"] .stButton>button:hover { background: rgba(111,78,55,0.09) !important; color: #3E2723 !important; }
+section[data-testid="stSidebar"] .stButton>button[kind="primary"] {
+    background: #EADFD0 !important; color: #3E2723 !important;
+    font-weight: 700 !important; box-shadow: inset 3px 0 0 #6F4E37 !important;
+}
+section[data-testid="stSidebar"] .stButton>button[kind="primary"]:hover { background: #E3D5C2 !important; }
+section[data-testid="stSidebar"] .stButton>button p { color: inherit !important; }
+section[data-testid="stSidebar"] .stButton>button [data-testid="stIconMaterial"] {
+    color: #6F4E37 !important; width: auto !important; flex: none !important;
+    margin-right: 10px !important; font-size: 22px !important;
+}
+
+/* Signed-in user card */
+section[data-testid="stSidebar"] .user-card { display: flex; align-items: center; gap: 12px; padding: 4px 6px 10px 6px; }
+section[data-testid="stSidebar"] .user-avatar {
+    width: 38px; height: 38px; border-radius: 50%; flex: none;
+    display: flex; align-items: center; justify-content: center;
+    background: #6F4E37; font-weight: 700; font-size: 16px; color: #FFFFFF !important;
+}
+section[data-testid="stSidebar"] .user-name { font-weight: 700; font-size: 14px; color: #3E2723 !important; line-height: 1.2; }
+section[data-testid="stSidebar"] .user-role { font-size: 12.5px; color: #8A7968 !important; }
+
+/* Expanders, status rows, footer */
+section[data-testid="stSidebar"] [data-testid="stExpander"] {
+    background: #FFFFFF; border: 1px solid rgba(62,39,35,0.10) !important; border-radius: 12px !important;
+}
+section[data-testid="stSidebar"] .status-count { color: #8A7968 !important; }
+section[data-testid="stSidebar"] .sidebar-footer {
+    margin-top: 22px; padding: 14px 6px 4px 6px; border-top: 1px solid rgba(62,39,35,0.08);
+    font-size: 11.5px; color: #9C8B7A !important; line-height: 1.5;
+}
+</style>
+''', unsafe_allow_html=True)
+
 # ============================================================================
 # STAT CARD COMPONENT -- replaces st.metric() with a professional card
 # (label, big value, optional delta chip). Earth-tone, no emoji.
@@ -481,7 +547,7 @@ def render_data_quality_check(df, dupe_subset=None, critical_cols=None):
     n_missing = int(per_col_missing.sum())
 
     if n_dupes == 0 and n_missing == 0:
-        st.success(f"✅ Data check passed — found {n_dupes} duplicate rows, {n_missing} missing values.")
+        st.success(f"Data check passed — found {n_dupes} duplicate rows, {n_missing} missing values.")
     else:
         lines = [f"**{n_dupes}** duplicate row(s) and **{n_missing}** missing/null value(s) found in this file."]
         if n_missing > 0:
@@ -490,7 +556,7 @@ def render_data_quality_check(df, dupe_subset=None, critical_cols=None):
             lines.append(f"Missing values by column: {col_list}.")
         if n_dupes > 0:
             lines.append("Duplicate rows will be filtered out automatically when added, but missing values won't be — please fix them in your file first.")
-        st.warning("⚠️ " + " ".join(lines))
+        st.warning(" ".join(lines))
 
 
 # after loading each dataframe, so it never appears anywhere on the
@@ -1094,57 +1160,106 @@ if os.environ.get('DINEDATA_RESET_OWNER') == '1':
 # ── Login gate — earth-tone themed ───────────────────────────────────────────
 if not st.session_state.get('auth_user'):
     st.session_state.setdefault('login_failures', 0)
-    st.markdown(f'''
+    st.markdown("""
     <style>
-    .stApp {{ background: linear-gradient(160deg, #FAF6F1 0%, #F1E9DE 100%); }}
-    [data-testid="stForm"] {{
-        background: white; border-radius: 18px; padding: 8px 6px;
-        border: 1px solid rgba(62,39,35,0.08);
-        box-shadow: 0 10px 30px rgba(62,39,35,0.10);
-    }}
-    div[data-testid="stVerticalBlockBorderWrapper"]:has([data-testid="stForm"]) {{
-        background: transparent !important; border: none !important; box-shadow: none !important;
-    }}
+    .stApp { background: linear-gradient(160deg, #FAF6F1 0%, #EFE3D3 100%); }
+    header[data-testid="stHeader"] { background: transparent; }
+    .block-container { max-width: 1020px !important; padding-top: 4rem !important; }
+
+    .login-brand {
+        position: relative; overflow: hidden; min-height: 470px;
+        padding: 40px 36px; border-radius: 22px; color: #FAF6F1;
+        background: linear-gradient(150deg, #3E2723 0%, #5A3B2B 55%, #6F4E37 100%);
+        box-shadow: 0 18px 40px rgba(62,39,35,0.28);
+        display: flex; flex-direction: column;
+    }
+    .login-brand::before {
+        content: ""; position: absolute; right: -70px; top: -70px;
+        width: 260px; height: 260px; border-radius: 50%; background: rgba(255,255,255,0.06);
+    }
+    .login-brand::after {
+        content: ""; position: absolute; left: -90px; bottom: -90px;
+        width: 280px; height: 280px; border-radius: 50%; background: rgba(210,105,30,0.13);
+    }
+    .login-logo {
+        width: 56px; height: 56px; border-radius: 16px; margin-bottom: 22px;
+        display: flex; align-items: center; justify-content: center;
+        background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.18);
+    }
+    .login-title { font-size: 34px; font-weight: 800; letter-spacing: 0.2px; color: #FAF6F1; margin: 0; }
+    .login-sub   { font-size: 15px; line-height: 1.55; color: #E3D5C4; margin: 8px 0 26px 0; max-width: 330px; }
+    .login-point { display: flex; align-items: center; gap: 12px; margin: 12px 0; font-size: 14.5px; color: #F1E7DA; position: relative; z-index: 1; }
+    .login-dot   { width: 9px; height: 9px; border-radius: 50%; background: #D2691E; flex: none; box-shadow: 0 0 0 4px rgba(210,105,30,0.22); }
+    .login-foot  { margin-top: auto; padding-top: 28px; font-size: 12px; letter-spacing: 1px; text-transform: uppercase; color: #BFAE9B; position: relative; z-index: 1; }
+
+    [data-testid="stForm"] {
+        background: #FFFFFF; border-radius: 22px; padding: 34px 30px 26px 30px;
+        border: 1px solid rgba(62,39,35,0.08); box-shadow: 0 18px 40px rgba(62,39,35,0.10);
+    }
+    .login-welcome { font-size: 26px; font-weight: 800; color: #3E2723; margin: 0 0 4px 0; }
+    .login-hint    { font-size: 14px; color: #8A7968; margin: 0 0 18px 0; }
+    [data-testid="stForm"] label p { font-weight: 600; color: #4A3B32; font-size: 14px; }
+    [data-testid="stForm"] input { border-radius: 10px; }
+    [data-testid="stFormSubmitButton"] button {
+        width: 100%; height: 46px; margin-top: 8px; border: none; border-radius: 12px;
+        background: linear-gradient(135deg, #3E2723 0%, #6F4E37 100%) !important;
+        color: #FFFFFF !important; font-weight: 700; font-size: 15px; letter-spacing: 0.3px;
+        box-shadow: 0 8px 18px rgba(62,39,35,0.25);
+    }
+    [data-testid="stFormSubmitButton"] button:hover { filter: brightness(1.12); }
+    .login-note { text-align: center; color: #A89786; font-size: 12px; margin-top: 16px; }
     </style>
-    <div style='text-align:center;margin-top:64px;margin-bottom:22px'>
-        <div style='display:inline-flex;align-items:center;justify-content:center;
-                    width:64px;height:64px;border-radius:18px;margin-bottom:14px;
-                    background:linear-gradient(135deg,{EARTH["dark"]} 0%,{EARTH["primary"]} 100%);
-                    box-shadow:0 8px 20px rgba(62,39,35,0.25);font-size:28px'>☕</div>
-        <h1 style='margin:0;color:{EARTH["dark"]};font-weight:800'>DineData</h1>
-        <p style='color:#8A7968;font-size:15px;margin-top:4px'>Kôfētala Bistro — please sign in</p>
-    </div>
-    ''', unsafe_allow_html=True)
-    _l, _m, _r = st.columns([1, 1.2, 1])
-    with _m:
-        with st.container(border=True):
-            if st.session_state.login_failures >= MAX_LOGIN_ATTEMPTS:
-                st.error("Too many failed attempts. Refresh the page to try again.")
-            else:
-                with st.form("login_form"):
-                    _u = st.text_input("Username")
-                    _p = st.text_input("Password", type="password")
-                    _go = st.form_submit_button("Sign in", use_container_width=True)
-                if _go:
-                    _acct = verify_login(_u, _p)
-                    if _acct:
-                        st.session_state.auth_user = _acct['username']
-                        st.session_state.auth_name = _acct['full_name']
-                        st.session_state.auth_role = _acct['role']
-                        st.session_state.login_failures = 0
-                        st.session_state.default_pw_in_use = (
-                            _acct['username'] == DEFAULT_OWNER_USER and _p == DEFAULT_OWNER_PASS)
-                        log_audit('LOGIN', detail='Signed in')
-                        st.rerun()
-                    else:
-                        st.session_state.login_failures += 1
-                        log_audit('LOGIN_FAILED', detail=f"Failed sign-in for username '{_u.strip()[:40]}'",
-                                  user=_u.strip()[:40] or 'unknown', role='n/a')
-                        st.error("Incorrect username or password.")
-        st.markdown(
-            "<p style='text-align:center;color:#B0A392;font-size:12px;margin-top:14px'>"
-            "DineData &middot; Waste Reduction System</p>", unsafe_allow_html=True
-        )
+    """, unsafe_allow_html=True)
+
+    _left, _right = st.columns([1, 1], gap="large")
+    with _left:
+        st.markdown("""
+        <div class="login-brand">
+            <div class="login-logo">
+                <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#FAF6F1" stroke-width="1.7"
+                     stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M4 9h13v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V9z"/>
+                    <path d="M17 10h1.5a2.5 2.5 0 0 1 0 5H17"/>
+                    <path d="M8 3v3M11.5 3v3M15 3v3"/>
+                </svg>
+            </div>
+            <div class="login-title">DineData</div>
+            <div class="login-sub">A smart waste reduction system for K&ocirc;f&emacr;tala Bistro.</div>
+            <div class="login-point"><span class="login-dot"></span>Know what to prepare, and when</div>
+            <div class="login-point"><span class="login-dot"></span>Catch ingredients before they expire</div>
+            <div class="login-point"><span class="login-dot"></span>See what is wasted, and why</div>
+            <div class="login-foot">K&ocirc;f&emacr;tala Bistro</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with _right:
+        if st.session_state.login_failures >= MAX_LOGIN_ATTEMPTS:
+            st.error("Too many failed attempts. Refresh the page to try again.")
+        else:
+            with st.form("login_form"):
+                st.markdown("<div class='login-welcome'>Welcome back</div>"
+                            "<div class='login-hint'>Sign in to continue to your dashboard.</div>",
+                            unsafe_allow_html=True)
+                _u = st.text_input("Username", placeholder="Enter your username")
+                _p = st.text_input("Password", type="password", placeholder="Enter your password")
+                _go = st.form_submit_button("Sign in", use_container_width=True)
+            if _go:
+                _acct = verify_login(_u, _p)
+                if _acct:
+                    st.session_state.auth_user = _acct['username']
+                    st.session_state.auth_name = _acct['full_name']
+                    st.session_state.auth_role = _acct['role']
+                    st.session_state.login_failures = 0
+                    st.session_state.default_pw_in_use = (
+                        _acct['username'] == DEFAULT_OWNER_USER and _p == DEFAULT_OWNER_PASS)
+                    log_audit('LOGIN', detail='Signed in')
+                    st.rerun()
+                else:
+                    st.session_state.login_failures += 1
+                    log_audit('LOGIN_FAILED', detail=f"Failed sign-in for username '{_u.strip()[:40]}'",
+                              user=_u.strip()[:40] or 'unknown', role='n/a')
+                    st.error("Incorrect username or password.")
+        st.markdown("<div class='login-note'>DineData &middot; Waste Reduction System</div>",
+                    unsafe_allow_html=True)
     st.stop()
 
 # ── Load all data and models — database first, CSV fallback ────────────────
@@ -1177,43 +1292,73 @@ waste_df = strip_placeholder_rows(waste_df, col_candidates=('item_name',))
 # ============================================================================
 
 with st.sidebar:
-    st.markdown('''
+    st.markdown("""
     <div class="sidebar-brand">
-        <div class="sidebar-brand-name">DineData</div>
-        <div class="sidebar-brand-sub">Kôfētala Bistro</div>
+        <div class="sidebar-logo">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#FAF6F1" stroke-width="1.8"
+                 stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4 9h13v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V9z"/>
+                <path d="M17 10h1.5a2.5 2.5 0 0 1 0 5H17"/>
+                <path d="M8 3v3M11.5 3v3M15 3v3"/>
+            </svg>
+        </div>
+        <div>
+            <div class="sidebar-brand-name">DineData</div>
+            <div class="sidebar-brand-sub">K&ocirc;f&emacr;tala Bistro</div>
+        </div>
     </div>
-    ''', unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
 
-    NAV_ITEMS = [
+    MAIN_NAV = [
         'Dashboard Overview',
         'Sales & Menu',
         'Waste & Inventory',
         'Forecast & Predictions',
         'Import Data',
     ]
-
-    if st.session_state.get('auth_role') == 'Owner':
-        NAV_ITEMS += ['Admin']
+    ADMIN_NAV = ['Admin'] if st.session_state.get('auth_role') == 'Owner' else []
+    NAV_ITEMS = MAIN_NAV + ADMIN_NAV
+    NAV_ICONS = {
+        'Dashboard Overview':     ':material/home:',
+        'Sales & Menu':           ':material/bar_chart:',
+        'Waste & Inventory':      ':material/inventory_2:',
+        'Forecast & Predictions': ':material/trending_up:',
+        'Import Data':            ':material/upload_file:',
+        'Admin':                  ':material/admin_panel_settings:',
+    }
 
     if st.session_state.get('page') not in NAV_ITEMS:
         st.session_state.page = NAV_ITEMS[0]
 
-    st.markdown('<div class="sidebar-section-label">Navigate</div>', unsafe_allow_html=True)
-    for item in NAV_ITEMS:
-        is_active = st.session_state.page == item
-        if st.button(
-            item, key=f'nav_{item}', use_container_width=True,
-            type='primary' if is_active else 'secondary'
-        ):
+    def _nav_button(item):
+        _kw = dict(key=f'nav_{item}', use_container_width=True,
+                   type='primary' if st.session_state.page == item else 'secondary')
+        try:
+            _clicked = st.button(item, icon=NAV_ICONS.get(item), **_kw)
+        except TypeError:          # older Streamlit without button icons
+            _clicked = st.button(item, **_kw)
+        if _clicked:
             st.session_state.page = item
             st.rerun()
 
+    for _item in MAIN_NAV:
+        _nav_button(_item)
+    if ADMIN_NAV:
+        st.markdown('<div class="sidebar-section-label">Admin Panel</div>', unsafe_allow_html=True)
+        for _item in ADMIN_NAV:
+            _nav_button(_item)
+
     page = st.session_state.page
 
-    st.markdown('<div class="sidebar-section-label">Signed in</div>', unsafe_allow_html=True)
-    st.markdown(f"<div style='padding:0 4px 6px 4px;font-size:13.5px'><b>{st.session_state.get('auth_name','')}</b><br>"
-                f"<span style='color:#B8A896'>{st.session_state.get('auth_role','')} · @{st.session_state.get('auth_user','')}</span></div>",
-                unsafe_allow_html=True)
+    # ── Account ──────────────────────────────────────────────────────────
+    from html import escape as _esc
+    _who  = st.session_state.get('auth_name') or st.session_state.get('auth_user') or ''
+    st.markdown('<div class="sidebar-section-label">Account</div>', unsafe_allow_html=True)
+    st.markdown(
+        f"<div class='user-card'><div class='user-avatar'>{_esc(_who[:1].upper() or '?')}</div>"
+        f"<div><div class='user-name'>{_esc(_who)}</div>"
+        f"<div class='user-role'>{_esc(st.session_state.get('auth_role',''))} &middot; @{_esc(st.session_state.get('auth_user',''))}</div>"
+        f"</div></div>", unsafe_allow_html=True)
     if st.session_state.get('default_pw_in_use'):
         st.warning("You are using the default password. Please change it below.")
     with st.expander("Change my password"):
@@ -1233,42 +1378,19 @@ with st.sidebar:
                 st.session_state.default_pw_in_use = False
                 log_audit('PASSWORD_CHANGED', 'USERS', 1, 'Changed own password')
                 st.success("Password updated.")
-    if st.button("Log out", key="logout_btn", use_container_width=True):
+    try:
+        _logout = st.button("Log out", key="logout_btn", use_container_width=True, icon=":material/logout:")
+    except TypeError:
+        _logout = st.button("Log out", key="logout_btn", use_container_width=True)
+    if _logout:
         log_audit('LOGOUT', detail='Signed out')
         for _k in ('auth_user', 'auth_name', 'auth_role', 'default_pw_in_use'):
             st.session_state.pop(_k, None)
         st.rerun()
 
-    st.markdown('<div class="sidebar-section-label">Data Status</div>', unsafe_allow_html=True)
-    status_rows = ""
-    for label, df_obj in [('Sales', sales_df), ('Menu', menu_df),
-                           ('Inventory', inventory_df), ('Waste', waste_df)]:
-        dot_cls = 'status-dot-ok' if df_obj is not None else 'status-dot-bad'
-        count = f'{len(df_obj):,} records' if df_obj is not None else 'Not found'
-        status_rows += f'''
-        <div class="status-row">
-            <span><span class="status-dot {dot_cls}"></span>{label}</span>
-            <span style="color:#B8A896;">{count}</span>
-        </div>'''
-    st.markdown(status_rows, unsafe_allow_html=True)
-
-    st.markdown('<div class="sidebar-section-label">Model Status</div>', unsafe_allow_html=True)
-    model_labels = {
-        'demand':   'Demand Forecast',
-        'waste':    'Waste Prediction',
-        'menu':     'Menu Classifier',
-        'spoilage': 'Alert Level Classifier',
-    }
-    model_rows = ""
-    for key, label in model_labels.items():
-        dot_cls = 'status-dot-ok' if models[key] is not None else 'status-dot-bad'
-        state = 'Loaded' if models[key] is not None else 'Missing'
-        model_rows += f'''
-        <div class="status-row">
-            <span><span class="status-dot {dot_cls}"></span>{label}</span>
-            <span style="color:#B8A896;">{state}</span>
-        </div>'''
-    st.markdown(model_rows, unsafe_allow_html=True)
+    st.markdown(
+        "<div class='sidebar-footer'>DineData &middot; Waste Reduction System<br>"
+        "K&ocirc;f&emacr;tala Bistro</div>", unsafe_allow_html=True)
 
 # ── Stop if no sales data ─────────────────────────────────────────────────
 if sales_df is None:
