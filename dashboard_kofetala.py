@@ -211,14 +211,6 @@ section[data-testid="stSidebar"] .stButton>button {{
     box-shadow: none !important;
     margin: 3px 0 !important;
 }}
-section[data-testid="stSidebar"] .stButton>button p,
-section[data-testid="stSidebar"] .stButton>button div,
-section[data-testid="stSidebar"] .stButton>button span {{
-    text-align: left !important;
-    justify-content: flex-start !important;
-    width: 100% !important;
-    margin: 0 !important;
-}}
 section[data-testid="stSidebar"] .stButton>button:hover {{
     background-color: rgba(255,255,255,0.06) !important;
     color: #FAF6F1 !important;
@@ -367,10 +359,24 @@ section[data-testid="stSidebar"] .stButton>button[kind="primary"] {
     font-weight: 700 !important; box-shadow: inset 3px 0 0 #6F4E37 !important;
 }
 section[data-testid="stSidebar"] .stButton>button[kind="primary"]:hover { background: #E3D5C2 !important; }
-section[data-testid="stSidebar"] .stButton>button p { color: inherit !important; }
+section[data-testid="stSidebar"] .stButton>button {
+    display: flex !important; flex-direction: row !important;
+    align-items: center !important; justify-content: flex-start !important;
+    width: 100% !important; text-align: left !important;
+}
+/* every wrapper inside the button sizes to its content (never 100%), so the
+   label can't be squeezed into a one-letter-wide column */
+section[data-testid="stSidebar"] .stButton>button * {
+    width: auto !important; max-width: none !important; min-width: 0 !important;
+    margin: 0 !important; text-align: left !important;
+}
+section[data-testid="stSidebar"] .stButton>button p,
+section[data-testid="stSidebar"] .stButton>button div {
+    white-space: nowrap !important; color: inherit !important;
+}
 section[data-testid="stSidebar"] .stButton>button [data-testid="stIconMaterial"] {
-    color: #6F4E37 !important; width: auto !important; flex: none !important;
-    margin-right: 10px !important; font-size: 22px !important;
+    color: #6F4E37 !important; flex: none !important;
+    margin: 0 12px 0 0 !important; font-size: 22px !important;
 }
 
 /* Signed-in user card */
