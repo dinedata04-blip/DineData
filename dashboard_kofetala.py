@@ -2828,7 +2828,7 @@ elif page == 'Waste & Inventory':
                 inv = inv_hist.copy()
 
             # ── Summary badges ────────────────────────────────────────────────
-            st.caption("Snapshot of the most recent 30 days of purchases. Full 3-year history is available in the 'Inventory Value Over Time' chart below.")
+            st.caption("Snapshot of the most recent 30 days of purchases.")
             alert_order = ['High Alert','Medium Alert','Low Alert','Expired','Out of Stock']
             alert_counts = inv['alert_level'].value_counts()
 
