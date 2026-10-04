@@ -628,9 +628,12 @@ QUARTER_MONTHS = {
 ALL_MONTHS = ['January','February','March','April','May','June',
               'July','August','September','October','November','December']
 
-PERIOD_MODES  = ['Yearly', 'Monthly', 'Weekly', 'Custom Date']
-PATTERN_MODES = ['Yearly', 'Monthly', 'Custom Date']   # a single week is too little data to show a pattern
-TREND_MODES   = ['Weekly', 'Monthly', 'Yearly', 'Custom Date']
+# Each chart is given ONLY the time filters it needs (see call sites):
+YEAR_ONLY     = ['Yearly']                          # needs lots of data (menu classes, waste day of week)
+MONTH_ONLY    = ['Monthly']                         # recent sales patterns (busiest hours, day of week)
+REASON_MODES  = ['Yearly', 'Monthly']               # waste by reason
+SUMMARY_MODES = ['Yearly', 'Monthly', 'Weekly']     # KPI cards and rankings
+TREND_MODES   = ['Weekly', 'Monthly', 'Yearly', 'Custom Date']   # trend charts (Custom Date = day-by-day zoom)
 
 def render_year_quarter_month_filter(df, key_prefix, date_col='date', modes=None):
     """Period filter used by KPI cards, rankings, and pattern charts. The
@@ -641,7 +644,7 @@ def render_year_quarter_month_filter(df, key_prefix, date_col='date', modes=None
       Weekly       -> any date; the Monday-Sunday week around it is used
       Custom Date  -> an exact date range
     Returns the filtered dataframe."""
-    modes = list(modes) if modes else PERIOD_MODES
+    modes = list(modes) if modes else SUMMARY_MODES
     df_f = df.copy()
     if date_col not in df_f.columns or len(df_f) == 0:
         return df_f
@@ -649,9 +652,14 @@ def render_year_quarter_month_filter(df, key_prefix, date_col='date', modes=None
     if dts.empty:
         return df_f
     min_d, max_d = dts.min().date(), dts.max().date()
-    c0, c1, c2 = st.columns(3)
-    with c0:
-        mode = st.selectbox("View by", modes, key=f'{key_prefix}_pmode')
+    _cols = iter(st.columns(3))
+    if len(modes) == 1:
+        mode = modes[0]                      # nothing to choose: skip the "View by" box
+    else:
+        with next(_cols):
+            mode = st.selectbox("View by", modes, key=f'{key_prefix}_pmode')
+    c1 = next(_cols)
+    c2 = next(_cols, None)
 
     if mode == 'Custom Date':
         with c1:
@@ -677,10 +685,13 @@ def render_year_quarter_month_filter(df, key_prefix, date_col='date', modes=None
         with c1:
             yr = st.selectbox("Year", [str(y) for y in years], key=f'{key_prefix}_pyear_m')
         yr_df = df_f[df_f[date_col].dt.year == int(yr)]
-        have = set(yr_df[date_col].dt.month_name())
-        present = [m for m in ALL_MONTHS if m in have]
+        _days = yr_df.groupby(yr_df[date_col].dt.month_name())[date_col].agg(lambda x: x.dt.date.nunique())
+        present = [m for m in ALL_MONTHS if m in _days.index]
+        # open on the latest month that has a reasonable amount of data, so a
+        # just-started month (a few days only) doesn't give a thin, misleading view
+        _full = [i for i, m in enumerate(present) if _days[m] >= 15]
         with c2:
-            mon = st.selectbox("Month", present, index=len(present) - 1,
+            mon = st.selectbox("Month", present, index=(_full[-1] if _full else len(present) - 1),
                                key=f'{key_prefix}_pmonth_{yr}')
         return yr_df[yr_df[date_col].dt.month_name() == mon]
 
@@ -696,7 +707,7 @@ def render_year_quarter_month_filter(df, key_prefix, date_col='date', modes=None
         st.caption(f"Showing {w_start.strftime('%b %d')} to {w_end.strftime('%b %d, %Y')}")
     return df_f[(df_f[date_col].dt.date >= w_start) & (df_f[date_col].dt.date <= w_end)]
 
-def render_trend_filter(df, key_prefix, date_col='date', default='Monthly'):
+def render_trend_filter(df, key_prefix, date_col='date', default='Monthly', modes=None):
     """Filter row for TREND charts: one 'View by' choice that also sets the
     chart's time bucket. Returns (filtered_df, granularity) where
     granularity is 'Weekly' / 'Monthly' / 'Yearly' / 'Daily' (Custom Date
@@ -707,9 +718,10 @@ def render_trend_filter(df, key_prefix, date_col='date', default='Monthly'):
     if date_col not in df_f.columns or len(df_f) == 0 or df_f[date_col].dropna().empty:
         return df_f, 'Monthly'
     dts = df_f[date_col].dropna()
+    modes = list(modes) if modes else TREND_MODES
     c1, c2 = st.columns([1, 2])
     with c1:
-        view = st.selectbox("View by", TREND_MODES, index=TREND_MODES.index(default),
+        view = st.selectbox("View by", modes, index=modes.index(default) if default in modes else 0,
                             key=f'{key_prefix}_view')
     with c2:
         if view == 'Custom Date':
@@ -1610,7 +1622,8 @@ if page == 'Dashboard Overview':
             # Waste, Inventory, and Menu snapshots below — this chart was
             # missing it before, so it always showed all-time data
             # regardless of period, unlike every other snapshot on this page.
-            sm_f, sm_gran = render_trend_filter(overview_sales, 'ov_sales', date_col='date')
+            sm_f, sm_gran = render_trend_filter(overview_sales, 'ov_sales', date_col='date',
+                                         modes=['Weekly', 'Monthly', 'Yearly'])
             if len(sm_f) == 0:
                 st.info("No sales records for this selection.")
             else:
@@ -1667,7 +1680,7 @@ if page == 'Dashboard Overview':
             # Filters — View By controls what other filters appear
             tf1, tf2, tf3 = st.columns(3)
             with tf1:
-                ow_granularity = st.selectbox("View By", ['Weekly','Monthly','Yearly','Custom Date'], index=1, key='ov_trend_gran')
+                ow_granularity = st.selectbox("View By", ['Weekly','Monthly','Yearly'], index=1, key='ov_trend_gran')
             with tf2:
                 if ow_granularity == 'Custom Date':
                     ow_custom_range = st.date_input(
@@ -1773,7 +1786,7 @@ if page == 'Dashboard Overview':
             inv_ov = overview_inv.copy()
             inv_ov['purchase_date'] = pd.to_datetime(inv_ov['purchase_date'], errors='coerce')
             inv_ov_f = render_year_quarter_month_filter(inv_ov, 'ov_inv', date_col='purchase_date',
-                                                        modes=['Monthly', 'Weekly', 'Custom Date'])
+                                                        modes=['Monthly', 'Weekly'])
 
             if 'alert_level' not in inv_ov_f.columns:
                 if 'spoilage_risk' in inv_ov_f.columns:
@@ -1847,7 +1860,7 @@ elif page == 'Sales & Menu':
         # numbers for Sales Analytics all live together at the top now.
         with st.container(border=True):
             st.markdown("### Business Summary")
-            kpi_src = _sa_apply_filters(sales_df, 'sa_summary')
+            kpi_src = _sa_apply_filters(sales_df, 'sa_summary', modes=SUMMARY_MODES)
             st.caption(f"Showing **{len(kpi_src):,}** of {len(sales_df):,} records")
 
             bcol1, bcol2, bcol3, bcol4, bcol5 = st.columns(5)
@@ -1875,7 +1888,7 @@ elif page == 'Sales & Menu':
         with st.container(border=True):
             st.markdown("#### Performance by Day of Week")
             dow_metric = st.selectbox("Metric", ['Revenue', 'Transactions'], key='sa_dow_metric')
-            dow_src = _sa_apply_filters(sales_df, 'sa_dow', modes=PATTERN_MODES)
+            dow_src = _sa_apply_filters(sales_df, 'sa_dow', modes=MONTH_ONLY)
             if 'date' in dow_src.columns and len(dow_src) > 0:
                 day_order = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']
                 fc = dow_src.copy()
@@ -1948,7 +1961,7 @@ elif page == 'Sales & Menu':
                     st.info("Time of day isn't available in the stored sales records yet, "
                             "so busiest hours can't be shown.")
                 else:
-                    busy_src = _sa_apply_filters(_busy_base, 'sa_busy', modes=PATTERN_MODES)
+                    busy_src = _sa_apply_filters(_busy_base, 'sa_busy', modes=MONTH_ONLY)
                     if len(busy_src) == 0:
                         st.info("No sales records for this filter combination.")
                     else:
@@ -1983,7 +1996,7 @@ elif page == 'Sales & Menu':
         # Horizontal bar — top 15 items — own filter
         with st.container(border=True):
             st.markdown("#### Top 15 Items by Quantity")
-            top15_src = _sa_apply_filters(sales_df, 'sa_top15')
+            top15_src = _sa_apply_filters(sales_df, 'sa_top15', modes=SUMMARY_MODES)
             if item_col and 'quantity' in top15_src.columns and len(top15_src) > 0:
                 top15_src['quantity'] = pd.to_numeric(top15_src['quantity'], errors='coerce')
                 top15_src, top15_item_disp, _ = add_normalized_keys(top15_src, item_col=item_col)
@@ -2247,24 +2260,16 @@ elif page == 'Sales & Menu':
         with st.container(border=True):
             st.markdown("#### Performance Distribution")
             st.caption("Which items to Keep, Improve, or Reconsider, filtered by period and category.")
-            src_dist = _mp_apply_filters(src, 'mp_dist', modes=PATTERN_MODES)
+            src_dist = _mp_apply_filters(src, 'mp_dist', modes=YEAR_ONLY)
             summary  = _mp_build_summary(src_dist)
 
         st.markdown("")
 
         if item_col and len(summary) > 0:
 
-            # ── Sort controls (for the tables below) ────────────────────────
-            sort_options = [c for c in ['quantity','total','profit_margin'] if c in summary.columns]
-            scol1, scol2 = st.columns(2)
-            with scol1:
-                sort_by  = st.selectbox("Sort by", sort_options if sort_options else [item_col], key='mp_sort_by')
-            with scol2:
-                sort_dir = st.selectbox("Order", ['Descending','Ascending'], key='mp_sort_dir')
-
-            ascending = sort_dir == 'Ascending'
-            if sort_by in summary.columns:
-                summary = summary.sort_values(sort_by, ascending=ascending)
+            # Best sellers first (no sort controls: the Owner and Staff just need the list)
+            if 'quantity' in summary.columns:
+                summary = summary.sort_values('quantity', ascending=False)
 
             if 'menu_performance' in summary.columns:
                 with st.container(border=True):
@@ -2558,7 +2563,7 @@ elif page == 'Waste & Inventory':
             # Menu Performance ───────────────────────────────────────────────
             with st.container(border=True):
                 st.markdown("### Waste Summary")
-                kpi_waste = _wa_apply_filters(display_waste, 'wa_kpi')
+                kpi_waste = _wa_apply_filters(display_waste, 'wa_kpi', modes=SUMMARY_MODES)
                 st.caption(f"Showing **{len(kpi_waste):,}** of {len(display_waste):,} waste records")
 
                 k1, k2, k3, k4 = st.columns(4)
@@ -2581,7 +2586,7 @@ elif page == 'Waste & Inventory':
             # Bar — waste cost by item (top 10) — own filter
             with st.container(border=True):
                 st.markdown("#### Top 10 Items by Waste Cost")
-                top10_waste = _wa_apply_filters(display_waste, 'wa_top10')
+                top10_waste = _wa_apply_filters(display_waste, 'wa_top10', modes=SUMMARY_MODES)
                 if 'item_name' in top10_waste.columns and 'total_waste_cost' in top10_waste.columns and len(top10_waste) > 0:
                     top10_waste, top10_item_disp, _ = add_normalized_keys(top10_waste, item_col='item_name')
                     top_items = (
@@ -2622,7 +2627,7 @@ elif page == 'Waste & Inventory':
             # Bar — waste by reason — own filter (no Reason filter here, chart IS the reason breakdown)
             with st.container(border=True):
                 st.markdown("#### Waste by Reason")
-                reason_waste = _wa_apply_filters(display_waste, 'wa_reason', show_reason=False)
+                reason_waste = _wa_apply_filters(display_waste, 'wa_reason', show_reason=False, modes=REASON_MODES)
                 if 'waste_reason' in reason_waste.columns and 'total_waste_cost' in reason_waste.columns and len(reason_waste) > 0:
                     reason = (
                         reason_waste.groupby('waste_reason')['total_waste_cost']
@@ -2738,7 +2743,7 @@ elif page == 'Waste & Inventory':
             # ── Waste by Day of Week — which day wastes the most — own filter ──
             with st.container(border=True):
                 st.markdown("#### Waste by Day of Week")
-                dow_waste_src = _wa_apply_filters(display_waste, 'wa_dow', modes=PATTERN_MODES)
+                dow_waste_src = _wa_apply_filters(display_waste, 'wa_dow', modes=YEAR_ONLY)
                 if 'date' in dow_waste_src.columns and 'total_waste_cost' in dow_waste_src.columns and len(dow_waste_src) > 0:
                     day_order_w = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']
                     dw = dow_waste_src.copy()
@@ -3272,19 +3277,33 @@ elif page == 'Forecast & Predictions':
 
     # ── KPI Cards — show today's day context ────────────────────────────
     st.markdown(f"### {today_day_name} Prediction Summary")
+    st.caption("Counts are per menu item (not per record). Waste figures are the totals on record; "
+               "the predictions below are calibrated for today.")
     k1, k2, k3, k4 = st.columns(4)
+    _has_item = 'item_name' in waste_input.columns
+    _n_items  = int(waste_input['item_name'].nunique()) if _has_item else 0
     with k1:
         total_waste = int(waste_input['quantity_wasted'].sum()) if 'quantity_wasted' in waste_input.columns else 0
-        stat_card("Total Units Wasted", f"{total_waste:,}")
+        stat_card("Units Wasted (on record)", f"{total_waste:,}")
     with k2:
         total_cost = waste_input['total_waste_cost'].sum() if 'total_waste_cost' in waste_input.columns else 0
-        stat_card("Total Waste Cost", f"₱{total_cost:,.2f}")
+        stat_card("Waste Cost (on record)", f"₱{total_cost:,.2f}")
     with k3:
-        to_reconsider = (waste_input['Menu Performance'] == 'Reconsider').sum() if 'Menu Performance' in waste_input.columns else 0
-        stat_card("Items to Reconsider", int(to_reconsider))
+        if _has_item and 'Menu Performance' in waste_input.columns:
+            # an item is "Reconsider" when most of its predictions say so
+            _mp = waste_input.groupby('item_name')['Menu Performance'].agg(
+                lambda x: x.mode().iat[0] if len(x.mode()) else '')
+            to_reconsider = int((_mp == 'Reconsider').sum())
+        else:
+            to_reconsider = 0
+        stat_card("Items to Reconsider", f"{to_reconsider} of {_n_items}")
     with k4:
-        high_alerts = (waste_input['Alert Level'] == 'High').sum() if 'Alert Level' in waste_input.columns else 0
-        stat_card("High Alert Items", int(high_alerts))
+        if _has_item and 'Alert Level' in waste_input.columns:
+            # count an item once if any of its predictions is a High Alert
+            high_alerts = int(waste_input.loc[waste_input['Alert Level'] == 'High', 'item_name'].nunique())
+        else:
+            high_alerts = 0
+        stat_card("High Alert Items", f"{high_alerts} of {_n_items}")
 
     st.markdown("")
 
