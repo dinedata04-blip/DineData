@@ -1226,17 +1226,35 @@ except Exception as _e:
     st.stop()
 
 # ── One-time owner recovery (controlled by an environment variable) ──
-if os.environ.get('DINEDATA_RESET_OWNER') == '1':
-    _c = _auth_conn()
-    _salt = secrets.token_hex(16)
-    _row = _c.execute("SELECT 1 FROM USERS WHERE username=?", (DEFAULT_OWNER_USER,)).fetchone()
-    if _row:
-        _c.execute("UPDATE USERS SET salt=?, pw_hash=?, active=1, role='Owner' WHERE username=?",
-                   (_salt, _hash_pw(DEFAULT_OWNER_PASS, _salt), DEFAULT_OWNER_USER))
-        _c.commit(); _c.close()
-    else:
-        _c.close()
-        create_user(DEFAULT_OWNER_USER, 'Owner', 'Owner', DEFAULT_OWNER_PASS, created_by='recovery')
+# Set DINEDATA_RESET_OWNER to any value (e.g. 1) in the host's variables to reset
+# the Owner password to DINEDATA_OWNER_PASS. The value is remembered in a small
+# marker file, so the reset happens ONCE per value. Without the marker the reset
+# ran on every page load and silently undid any password the Owner had changed.
+# To recover again later, set the variable to a new value (e.g. 2).
+_reset_token = os.environ.get('DINEDATA_RESET_OWNER', '').strip()
+if _reset_token:
+    _marker = os.path.join(DATABASE_DIR, '.owner_reset_token')
+    try:
+        _done = open(_marker, encoding='utf-8').read().strip() if os.path.exists(_marker) else ''
+    except Exception:
+        _done = ''
+    if _done != _reset_token:
+        _c = _auth_conn()
+        _salt = secrets.token_hex(16)
+        _row = _c.execute("SELECT 1 FROM USERS WHERE username=?", (DEFAULT_OWNER_USER,)).fetchone()
+        if _row:
+            _c.execute("UPDATE USERS SET salt=?, pw_hash=?, active=1, role='Owner' WHERE username=?",
+                       (_salt, _hash_pw(DEFAULT_OWNER_PASS, _salt), DEFAULT_OWNER_USER))
+            _c.commit(); _c.close()
+        else:
+            _c.close()
+            create_user(DEFAULT_OWNER_USER, 'Owner', 'Owner', DEFAULT_OWNER_PASS, created_by='recovery')
+        try:
+            os.makedirs(DATABASE_DIR, exist_ok=True)
+            with open(_marker, 'w', encoding='utf-8') as _f:
+                _f.write(_reset_token)
+        except Exception:
+            pass
 
 # ── Login gate — earth-tone themed ───────────────────────────────────────────
 if not st.session_state.get('auth_user'):
