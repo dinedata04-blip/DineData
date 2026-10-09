@@ -1361,6 +1361,10 @@ if not st.session_state.get('auth_user'):
                     unsafe_allow_html=True)
     st.stop()
 
+# Staff see only what the kitchen needs (food prep + inventory, no sales or money figures).
+# Everything else, including Import Data, belongs to the Owner.
+IS_STAFF = st.session_state.get('auth_role') == 'Staff'
+
 # ── Load all data and models — database first, CSV fallback ────────────────
 if db_available():
     sales_df     = load_sales_from_db()
@@ -1408,20 +1412,24 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
-    MAIN_NAV = [
-        'Dashboard Overview',
-        'Sales & Menu',
-        'Waste & Inventory',
-        'Forecast & Predictions',
-        'Import Data',
-    ]
+    if IS_STAFF:
+        MAIN_NAV = ['Forecast & Predictions', 'Waste & Inventory']      # shown as Food Prep / Inventory Check
+    else:
+        MAIN_NAV = [
+            'Dashboard Overview',
+            'Sales & Menu',
+            'Waste & Inventory',
+            'Forecast & Predictions',
+            'Import Data',
+        ]
+    NAV_LABELS = {'Forecast & Predictions': 'Food Prep', 'Waste & Inventory': 'Inventory Check'} if IS_STAFF else {}
     ADMIN_NAV = ['Admin'] if st.session_state.get('auth_role') == 'Owner' else []
     NAV_ITEMS = MAIN_NAV + ADMIN_NAV
     NAV_ICONS = {
         'Dashboard Overview':     ':material/home:',
         'Sales & Menu':           ':material/bar_chart:',
         'Waste & Inventory':      ':material/inventory_2:',
-        'Forecast & Predictions': ':material/trending_up:',
+        'Forecast & Predictions': ':material/restaurant:' if IS_STAFF else ':material/trending_up:',
         'Import Data':            ':material/upload_file:',
         'Admin':                  ':material/admin_panel_settings:',
     }
@@ -1433,9 +1441,9 @@ with st.sidebar:
         _kw = dict(key=f'nav_{item}', use_container_width=True,
                    type='primary' if st.session_state.page == item else 'secondary')
         try:
-            _clicked = st.button(item, icon=NAV_ICONS.get(item), **_kw)
+            _clicked = st.button(NAV_LABELS.get(item, item), icon=NAV_ICONS.get(item), **_kw)
         except TypeError:          # older Streamlit without button icons
-            _clicked = st.button(item, **_kw)
+            _clicked = st.button(NAV_LABELS.get(item, item), **_kw)
         if _clicked:
             st.session_state.page = item
             st.rerun()
@@ -2521,10 +2529,13 @@ elif page == 'Sales & Menu':
 
 elif page == 'Waste & Inventory':
 
-    st.title("Waste & Inventory")
-    _t0, _t1 = st.tabs(["Waste", "Inventory"])
+    st.title("Inventory Check" if IS_STAFF else "Waste & Inventory")
+    if IS_STAFF:
+        _t0, _t1 = None, st.container()          # no Waste tab for Staff
+    else:
+        _t0, _t1 = st.tabs(["Waste", "Inventory"])
 
-    with _t0:
+    if not IS_STAFF:      # Waste tab (peso figures): Owner only
         st.caption("To add new waste records, go to the **Import Data** page — all data uploads now happen there.")
 
         # ── WASTE DATA FILE PATH — saved in Data_Cleaning folder ─────────────
@@ -2809,7 +2820,8 @@ elif page == 'Waste & Inventory':
             st.info("No waste data yet. Go to the Import Data page to upload your waste log.")
 
     with _t1:
-        st.caption("To add new inventory records, go to the **Import Data** page — all data uploads now happen there.")
+        if not IS_STAFF:
+            st.caption("To add new inventory records, go to the **Import Data** page — all data uploads now happen there.")
 
         # Alert level colors (renamed from Risk)
         ALERT_COLORS = {
@@ -2917,6 +2929,8 @@ elif page == 'Waste & Inventory':
                         'alert_level': 'Alert Level',
                     }
                     inv_table = inv_table.rename(columns=rename_map)
+                    if IS_STAFF:      # no peso columns for Staff
+                        inv_table = inv_table.drop(columns=[c for c in ('Cost per Unit', 'Total Cost') if c in inv_table.columns])
 
                     # Sort most urgent first by default: High Alert / Expired /
                     # Out of Stock rows surface at the top even when the filter
@@ -3039,7 +3053,7 @@ elif page == 'Waste & Inventory':
                         f"<b>{len(restock_now)}</b> ingredient(s) need restocking right now, "
                         f"<b>{len(restock_soon)}</b> should be reordered this week, and "
                         f"<b>{len(well_stocked)}</b> are currently well stocked. "
-                        "To add a brand-new ingredient that isn't tracked yet, upload it on the Import Data page — "
+                        "To add a brand-new ingredient that isn't tracked yet, the Owner can upload it on the Import Data page — "
                         "it will show up here once it has a purchase record."
                     )
                 else:
@@ -3076,6 +3090,9 @@ elif page == 'Waste & Inventory':
                                   f"No items are currently at High Alert. Current ingredient management is working well.", 'good')
 
             st.markdown("")
+
+            if IS_STAFF:
+                st.stop()      # value chart and report download contain peso figures: Owner only
 
             # ── Additional graphs ────────────────────────────────────────────
             with st.container(border=True):
@@ -3147,17 +3164,24 @@ elif page == 'Waste & Inventory':
 elif page == 'Forecast & Predictions':
 
     # ── Page header ───────────────────────────────────────────────────────
-    hero_banner(
-        "DineData Intelligence",
-        "Forecast & Predictions",
-        "Waste, menu, and spoilage predictions — plus an adjustable demand, sales, and waste trend forecast"
-    )
+    if IS_STAFF:
+        hero_banner("Kitchen Guide", "Food Prep",
+                    "What to prepare today, when to prepare it, and what to restock")
+    else:
+        hero_banner(
+            "DineData Intelligence",
+            "Forecast & Predictions",
+            "Waste, menu, and spoilage predictions — plus an adjustable demand, sales, and waste trend forecast"
+        )
 
     # ============================================================================
     # SECTION 1: WASTE, MENU & SPOILAGE PREDICTIONS — Random Forest models
     # ============================================================================
-    st.markdown("## Waste, Menu & Spoilage Predictions")
-    st.caption("Runs your waste data through 4 trained models — each one chosen as the best of 3 algorithms compared during training.")
+    if IS_STAFF:
+        st.markdown("## Today's Food Prep")
+    else:
+        st.markdown("## Waste, Menu & Spoilage Predictions")
+        st.caption("Runs your waste data through 4 trained models — each one chosen as the best of 3 algorithms compared during training.")
 
     if not metrics:
         st.warning("Run `python ML_Models/ml_models.py` to train models first.")
@@ -3293,37 +3317,38 @@ elif page == 'Forecast & Predictions':
         coffee_status.update(label="Pouring your results...")
         coffee_status.update(label="Predictions ready!", state="complete", expanded=False)
 
-    # ── KPI Cards — show today's day context ────────────────────────────
-    st.markdown(f"### {today_day_name} Prediction Summary")
-    st.caption("Counts are per menu item (not per record). Waste figures are the totals on record; "
-               "the predictions below are calibrated for today.")
-    k1, k2, k3, k4 = st.columns(4)
-    _has_item = 'item_name' in waste_input.columns
-    _n_items  = int(waste_input['item_name'].nunique()) if _has_item else 0
-    with k1:
-        total_waste = int(waste_input['quantity_wasted'].sum()) if 'quantity_wasted' in waste_input.columns else 0
-        stat_card("Units Wasted (on record)", f"{total_waste:,}")
-    with k2:
-        total_cost = waste_input['total_waste_cost'].sum() if 'total_waste_cost' in waste_input.columns else 0
-        stat_card("Waste Cost (on record)", f"₱{total_cost:,.2f}")
-    with k3:
-        if _has_item and 'Menu Performance' in waste_input.columns:
-            # an item is "Reconsider" when most of its predictions say so
-            _mp = waste_input.groupby('item_name')['Menu Performance'].agg(
-                lambda x: x.mode().iat[0] if len(x.mode()) else '')
-            to_reconsider = int((_mp == 'Reconsider').sum())
-        else:
-            to_reconsider = 0
-        stat_card("Items to Reconsider", f"{to_reconsider} of {_n_items}")
-    with k4:
-        if _has_item and 'Alert Level' in waste_input.columns:
-            # count an item once if any of its predictions is a High Alert
-            high_alerts = int(waste_input.loc[waste_input['Alert Level'] == 'High', 'item_name'].nunique())
-        else:
-            high_alerts = 0
-        stat_card("High Alert Items", f"{high_alerts} of {_n_items}")
+    if not IS_STAFF:   # prediction summary carries peso totals: Owner only
+        # ── KPI Cards — show today's day context ────────────────────────────
+        st.markdown(f"### {today_day_name} Prediction Summary")
+        st.caption("Counts are per menu item (not per record). Waste figures are the totals on record; "
+                   "the predictions below are calibrated for today.")
+        k1, k2, k3, k4 = st.columns(4)
+        _has_item = 'item_name' in waste_input.columns
+        _n_items  = int(waste_input['item_name'].nunique()) if _has_item else 0
+        with k1:
+            total_waste = int(waste_input['quantity_wasted'].sum()) if 'quantity_wasted' in waste_input.columns else 0
+            stat_card("Units Wasted (on record)", f"{total_waste:,}")
+        with k2:
+            total_cost = waste_input['total_waste_cost'].sum() if 'total_waste_cost' in waste_input.columns else 0
+            stat_card("Waste Cost (on record)", f"₱{total_cost:,.2f}")
+        with k3:
+            if _has_item and 'Menu Performance' in waste_input.columns:
+                # an item is "Reconsider" when most of its predictions say so
+                _mp = waste_input.groupby('item_name')['Menu Performance'].agg(
+                    lambda x: x.mode().iat[0] if len(x.mode()) else '')
+                to_reconsider = int((_mp == 'Reconsider').sum())
+            else:
+                to_reconsider = 0
+            stat_card("Items to Reconsider", f"{to_reconsider} of {_n_items}")
+        with k4:
+            if _has_item and 'Alert Level' in waste_input.columns:
+                # count an item once if any of its predictions is a High Alert
+                high_alerts = int(waste_input.loc[waste_input['Alert Level'] == 'High', 'item_name'].nunique())
+            else:
+                high_alerts = 0
+            stat_card("High Alert Items", f"{high_alerts} of {_n_items}")
 
-    st.markdown("")
+        st.markdown("")
 
     # ── Production Guide ──────────────────────────────────────────────────
     with st.container(border=True):
@@ -3760,6 +3785,9 @@ elif page == 'Forecast & Predictions':
             st.info("No inventory data found. Go to the Import Data page to upload inventory records first.")
 
     st.markdown("")
+
+    if IS_STAFF:
+        st.stop()      # Staff stop here: menu recommendations, downloads and forecasts are Owner-only
 
     # ============================================================
     # GRAPH 4: Menu Recommendations
